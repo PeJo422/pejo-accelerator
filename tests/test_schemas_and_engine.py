@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from pejo.adapters.base import BaseAdapter
-import pejo.adapters.dataverse as dataverse_module
-from pejo.adapters.dataverse import DataverseAdapter
+import pejo.adapters.fo as adapter_module
+from pejo.adapters.fo import PEJOAdapter
 from pejo.core.engine import Engine
 from pejo.schemas import load_metadata_from_yaml
 
@@ -137,14 +137,15 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
-    metadata_table: bronze.crm.globaloptionsetmetadata
-    option_name_column: optionsetname
-    option_value_column: optionvalue
-    option_label_column: label
-    output_column: salesstatus_label
+    enum: SalesStatus
+    mapping:
+      table: bronze.crm.globaloptionsetmetadata
+      enum_column: optionsetname
+      key_column: optionvalue
+      label_column: label
+      output_column: salesstatus_label
 """.strip(),
         encoding="utf-8",
     )
@@ -165,9 +166,9 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
+    enum: SalesStatus
 """.strip(),
         encoding="utf-8",
     )
@@ -179,11 +180,11 @@ enums:
         assert len(enum_mappings) == 1
         return df
 
-    monkeypatch.setattr(dataverse_module, "apply_enum_mappings", _fake_apply)
+    monkeypatch.setattr(adapter_module, "apply_enum_mappings", _fake_apply)
 
     engine = Engine.from_yaml_dir(
         spark=DummySpark(),
-        adapter=DataverseAdapter(),
+        adapter=PEJOAdapter(),
         schema_dir=tmp_path,
     )
 
@@ -248,7 +249,7 @@ scdtype: SCD2
 
 
 def test_loads_hashing_and_enum_columns_from_yaml(tmp_path: Path):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_512
@@ -267,12 +268,13 @@ silver: silver_salestable
 primary_key: [recid, dataareaid]
 business_key: [salesid, dataareaid]
 hash_columns: [salesid, custaccount, salesstatus, invoiceaccount, modifieddatetime]
-enum_columns:
-  salesstatus:
-    metadata_table: bronze_enum_metadata
-    optionset: salesstatus
-    key_column: option
-    label_column: localizedlabel
+enum:
+  - column: salesstatus
+    enum: salesstatus
+    mapping:
+      table: bronze_enum_metadata
+      key_column: option
+      label_column: localizedlabel
 """.strip(),
         encoding="utf-8",
     )
@@ -292,7 +294,7 @@ enum_columns:
 
 
 def test_engine_applies_hashing_strategy(tmp_path: Path, monkeypatch):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_256
@@ -337,6 +339,32 @@ hash_columns: [salesid, custaccount]
     assert calls["value"] == 1
 
 
+def test_load_metadata_recursively_from_metadata_root(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_512
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "sales").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "sales" / "salestable.yml").write_text(
+        """
+table: salestable
+domain: sales
+bronze: bronze_salestable
+silver: silver_salestable
+hash_columns: [salesid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    metadata = load_metadata_from_yaml(tmp_path)
+    assert "salestable" in metadata
+    assert metadata["salestable"]["hashing"].algorithm == "sha2_512"
+
+
 
 def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
     (tmp_path / "platform.yaml").write_text(
@@ -366,4 +394,3 @@ hash_algorithm: sha2_512
         assert False, "Expected ValueError for table-level hashing override"
     except ValueError as exc:
         assert "Table-level hashing overrides are not allowed" in str(exc)
-

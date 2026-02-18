@@ -1,4 +1,3 @@
-from pejo.adapters.dataverse import DataverseAdapter
 from pejo.adapters.fo import PEJOAdapter
 from pejo.core.engine import DomainRunResult, Engine
 from pejo.features.enums import apply_enum_mappings
@@ -9,7 +8,6 @@ __all__ = [
     "Engine",
     "DomainRunResult",
     "PEJOAdapter",
-    "DataverseAdapter",
     "load_metadata_from_yaml",
     "apply_enum_mappings",
     "apply_hashing_strategy",

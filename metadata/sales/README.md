@@ -1,16 +1,18 @@
-# Finance metadata
+# Sales metadata
 
 Exempelfiler för PEJO acceleratorn:
 
 - `custtable.yml`: dimensionslik tabell med `SCD2` + hashing.
-- `salestable.yml`: underlag för faktatabell med `SCD1`, enum-mappning och soft delete.
+- `salestable.yml`: underlag för faktatabell med `SCD1`, flera enum-mappningar och soft delete.
 
 Kör exempelvis i notebook:
 
 ```python
 from pejo import Engine, PEJOAdapter
 
-engine = Engine.from_yaml_dir(spark=spark, adapter=PEJOAdapter(), schema_dir="./metadata/finance")
-engine.run("CustTable")
-engine.run("FactSalesTable")
+engine = Engine.from_yaml_dir(spark=spark, adapter=PEJOAdapter(), schema_dir="./metadata")
+engine.run("custtable")
+engine.run("salestable")
 ```
+
+Global hash-konfiguration ligger i `metadata/config.yml`.
