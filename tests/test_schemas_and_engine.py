@@ -240,3 +240,73 @@ scdtype: SCD2
     assert len(update_calls) == 1
     assert len(insert_calls) == 1
 
+
+
+def test_loads_hashing_and_enum_columns_from_yaml(tmp_path: Path):
+    (tmp_path / "hash.yml").write_text(
+        """
+table: SalesTable
+domain: Finance
+bronze: bronze_salestable
+silver: silver_salestable
+primary_key: [recid, dataareaid]
+business_key: [salesid, dataareaid]
+hash_columns: [salesid, custaccount, salesstatus, invoiceaccount, modifieddatetime]
+hash_algorithm: sha2_512
+enum_columns:
+  salesstatus:
+    metadata_table: bronze_enum_metadata
+    optionset: salesstatus
+    key_column: option
+    label_column: localizedlabel
+""".strip(),
+        encoding="utf-8",
+    )
+
+    metadata = load_metadata_from_yaml(tmp_path)
+    cfg = metadata["SalesTable"]
+
+    assert cfg["business_key"] == ["salesid", "dataareaid"]
+    assert cfg["hash_columns"][0] == "salesid"
+    assert cfg["hash_algorithm"] == "sha2_512"
+
+    assert len(cfg["enums"]) == 1
+    assert cfg["enums"][0]["column"] == "salesstatus"
+    assert cfg["enums"][0]["option_value_column"] == "option"
+    assert cfg["enums"][0]["option_label_column"] == "localizedlabel"
+
+
+
+def test_engine_applies_hashing_strategy(tmp_path: Path, monkeypatch):
+    (tmp_path / "hash.yml").write_text(
+        """
+table: SalesTable
+domain: Finance
+bronze: bronze_salestable
+silver: silver_salestable
+primary_key: [recid, dataareaid]
+business_key: [salesid, dataareaid]
+hash_columns: [salesid, custaccount]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    calls = {"value": 0}
+
+    def _fake_hash(df, config):
+        calls["value"] += 1
+        assert config["business_key"] == ["salesid", "dataareaid"]
+        assert config["hash_columns"] == ["salesid", "custaccount"]
+        return df
+
+    monkeypatch.setattr(engine_module, "apply_hashing_strategy", _fake_hash)
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("SalesTable")
+    assert calls["value"] == 1
+

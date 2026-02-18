@@ -45,6 +45,10 @@ tables:
 | `soft_delete.enabled` | `bool` | Nej | Om `true` läggs `WHEN MATCHED AND s.<column> = true THEN DELETE` till MERGE. |
 | `soft_delete.column` | `string` | Nej | Kolumn för soft delete-villkoret. |
 | `enums` | `list[mapping]` | Nej | Dynamics enum-lookup (GlobalOptionSetMetadata) före MERGE. |
+| `enum_columns` | `mapping` | Nej | Kortform för enum-mappningar per kolumn (normaliseras till `enums`). |
+| `business_key` | `string` eller `list[string]` | Nej | Kolumner för business key-hash (`business_key_hash`). |
+| `hash_columns` | `string` eller `list[string]` | Nej | Kolumner för rad-hash (`row_hash`). |
+| `hash_algorithm` | `string` | Nej | `sha2_256` (default), `sha2_512` eller `md5`. |
 
 
 ## SCD-beteende (implementerat)
@@ -99,14 +103,69 @@ tables:
 
 Engine gör då lookup mot metadata-tabellen och skapar label-kolumnen innan MERGE.
 
-## Business key och hashing (status i nuvarande kod)
-`business_key` och `hashing` stöds **inte** i nuvarande implementation.
+## Business key och hashing (implementerat)
 
-Det betyder:
-- YAML-fält som `business_key`, `hashes`, `hashing`, `hash_algorithm` används inte av engine i dagsläget.
-- Inga hash-kolumner byggs automatiskt före MERGE.
+Ni kan nu konfigurera hash-strategi i YAML, t.ex.:
 
-Om ni vill kan vi lägga till detta i nästa steg med tydlig standard i YAML.
+```yaml
+business_key:
+  - salesid
+  - dataareaid
+
+hash_columns:
+  - salesid
+  - custaccount
+  - salesstatus
+  - invoiceaccount
+  - modifieddatetime
+
+hash_algorithm: sha2_256   # valfritt (sha2_256|sha2_512|md5)
+hash_separator: "||"        # valfritt
+hash_null_replacement: ""   # valfritt
+```
+
+Engine skapar då:
+- `business_key_hash` från `business_key`
+- `row_hash` från `hash_columns`
+
+Detta görs efter enum-berikning och före MERGE/SCD2-SQL.
+
+## Exempel enligt Finance-mönstret
+
+```yaml
+table: SalesTable
+domain: finance
+bronze: bronze_salestable
+silver: silver_salestable
+
+primary_key:
+  - recid
+  - dataareaid
+
+business_key:
+  - salesid
+  - dataareaid
+
+hash_columns:
+  - salesid
+  - custaccount
+  - salesstatus
+  - invoiceaccount
+  - modifieddatetime
+
+enum_columns:
+  salesstatus:
+    metadata_table: bronze_enum_metadata
+    optionset: salesstatus
+    key_column: option
+    label_column: localizedlabel
+
+soft_delete:
+  enabled: true
+  column: isdeleted
+```
+
+`enum_columns` är en kortform som normaliseras till vanliga `enums` internt.
 
 ## Notebook-användning
 
