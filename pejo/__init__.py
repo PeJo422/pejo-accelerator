@@ -1,5 +1,12 @@
 from pejo.adapters.fo import PEJOAdapter
-from pejo.core.engine import DryRunResult, DomainRunResult, Engine, TableListRunResult, ValidationResult
+from pejo.core.engine import (
+    DryRunResult,
+    DomainRunResult,
+    Engine,
+    TableListRunResult,
+    TableMetadata,
+    ValidationResult,
+)
 from pejo.features.enums import apply_enum_mappings
 from pejo.core.hashing import apply_hashing_strategy
 from pejo.schemas import load_metadata_from_yaml
@@ -9,6 +16,7 @@ __all__ = [
     "DryRunResult",
     "DomainRunResult",
     "TableListRunResult",
+    "TableMetadata",
     "ValidationResult",
     "PEJOAdapter",
     "load_metadata_from_yaml",
