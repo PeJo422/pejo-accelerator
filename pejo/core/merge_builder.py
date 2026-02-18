@@ -1,11 +1,13 @@
-def build_merge_sql(target, source_view, keys, columns, soft_delete=None):
-    join_condition = " AND ".join(
-        [f"t.{k} = s.{k}" for k in keys]
-    )
+from __future__ import annotations
 
-    update_clause = ",\n        ".join(
-        [f"t.{c} = s.{c}" for c in columns]
-    )
+
+def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None):
+    if not keys:
+        raise ValueError("Delta merge requires at least one primary key column")
+
+    join_condition = " AND ".join([f"t.{k} = s.{k}" for k in keys])
+
+    update_clause = ",\n        ".join([f"t.{c} = s.{c}" for c in columns])
 
     insert_columns = ", ".join(columns)
     insert_values = ", ".join([f"s.{c}" for c in columns])
@@ -30,3 +32,15 @@ def build_merge_sql(target, source_view, keys, columns, soft_delete=None):
     """
 
     return merge_sql
+
+
+def build_merge_sql(target, source_view, keys, columns, soft_delete=None):
+    """Backward compatible alias. Kept to avoid breaking callers."""
+
+    return build_delta_merge_sql(
+        target=target,
+        source_view=source_view,
+        keys=keys,
+        columns=columns,
+        soft_delete=soft_delete,
+    )
