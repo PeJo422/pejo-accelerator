@@ -49,6 +49,7 @@ tables:
 | `business_key` | `string` eller `list[string]` | Nej | Kolumner för business key-hash (`business_key_hash`). |
 | `hash_columns` | `string` eller `list[string]` | Nej | Kolumner för rad-hash (`row_hash`). |
 | `hash_algorithm` | `string` | Nej | **Ej tillåten per tabell**. Sätts globalt i `config.yml` (eller `platform.yaml`) under `hashing.algorithm`. |
+| `columns` | `list[mapping]` | Nej | Kolumnregler, t.ex. `null_handling: error|warning|replace` och `null_replacement` för `replace`. |
 
 
 ## SCD-beteende (implementerat)
@@ -113,7 +114,6 @@ Hash-strategin styrs nu globalt i `config.yml` (inte per tabell):
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 ```
 
 Per tabell anger ni endast vilka kolumner som ska hash:as:
@@ -139,6 +139,8 @@ Detta görs efter enum-berikning och före MERGE/SCD2-SQL.
 
 Om en tabell försöker sätta `hash_algorithm`, `hash_separator` eller `hash_null_replacement` så kastas ett fel (fail fast).
 
+`null_replacement` stöds inte globalt utan konfigureras per kolumn i respektive tabell-YAML under `columns`.
+
 ## Exempel enligt metadata-mönstret
 
 ```yaml
@@ -146,7 +148,6 @@ Om en tabell försöker sätta `hash_algorithm`, `hash_separator` eller `hash_nu
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 ```
 
 ```yaml
@@ -170,6 +171,13 @@ hash_columns:
   - salesstatus
   - invoiceaccount
   - modifieddatetime
+
+columns:
+  - custaccount:
+      null_handling: error
+  - salesstatus:
+      null_handling: replace
+      null_replacement: "Unknown"
 
 enum:
   - column: salesstatus
@@ -205,6 +213,20 @@ engine.run("custtable")
 
 # Kör en hel domän
 engine.run_domain("sales")
+
+# Kör en lista av tabeller
+engine.run_table_list(["custtable", "salestable"])
+
+# Validera metadata/SQL-plan utan att skriva till target
+engine.validate_only(table_name="custtable")
+engine.validate_only(domain="sales")
+engine.validate_only(table_names=["custtable", "salestable"])
+
+# Dry-run för en tabell (returnerar SQL som skulle köras)
+dry = engine.dry_run("custtable")
+for sql in dry.sql_statements:
+    print(sql)
+
 ```
 
 ## Körningsloggar

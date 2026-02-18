@@ -27,3 +27,11 @@ hash_columns:
 soft_delete:
   enabled: true
   column: isdeleted
+
+columns:
+  - accountnum:
+      null_handling: error
+
+  - currency:
+      null_handling: replace
+      null_replacement: "Unknown"
