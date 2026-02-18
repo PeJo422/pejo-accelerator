@@ -1,6 +1,6 @@
 # PEJO Fabric Accelerator
 
-PEJO acceleratorn kör metadata-styrda merge-flöden i Fabric/Spark.
+PEJO acceleratorn kör metadata-styrda **Delta MERGE**-flöden i Fabric/Spark.
 
 ## YAML-scheman
 Lägg schemafiler i en katalog, t.ex. `schemas/`:
@@ -13,6 +13,7 @@ tables:
     bronze: bronze.sales.custtable
     silver: silver.sales.custtable
     primary_key: [recid, dataareaid]
+    load_type: delta_merge
 
   - table: SalesTable
     domain: Sales
@@ -24,6 +25,7 @@ tables:
     soft_delete:
       enabled: true
       column: isdeleted
+    load_type: delta_merge
 ```
 
 ## Notebook-användning

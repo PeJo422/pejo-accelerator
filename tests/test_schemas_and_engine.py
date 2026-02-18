@@ -98,3 +98,5 @@ tables:
 
     result = engine.run_domain("Sales")
     assert set(result.tables) == {"CustTable", "SalesTable"}
+    assert len(engine.spark.sql_calls) == 2
+    assert all("MERGE INTO" in q for q in engine.spark.sql_calls)

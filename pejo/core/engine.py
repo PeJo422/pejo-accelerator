@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pejo.core.logging import RunLogger
-from pejo.core.merge_builder import build_merge_sql
+from pejo.core.merge_builder import build_delta_merge_sql
 from pejo.schemas import load_metadata_from_yaml
 
 
@@ -43,7 +43,11 @@ class Engine:
             columns = df.columns
             keys = config.get("primary_key") or self.adapter.default_primary_key()
 
-            merge_sql = build_merge_sql(
+            load_type = str(config.get("load_type", "delta_merge")).lower()
+            if load_type != "delta_merge":
+                raise ValueError(f"Unsupported load_type '{load_type}'. Only 'delta_merge' is supported.")
+
+            merge_sql = build_delta_merge_sql(
                 target=config["silver"],
                 source_view="source_view",
                 keys=keys,
