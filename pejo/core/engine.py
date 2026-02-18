@@ -7,7 +7,6 @@ from typing import Any
 from pejo.core.logging import RunLogger
 from pejo.core.hashing import apply_hashing_strategy
 from pejo.core.merge_builder import build_delta_merge_sql, build_scd2_sql
-from pejo.adapters.dynamics import apply_enum_mappings
 from pejo.schemas import load_metadata_from_yaml
 
 
@@ -40,9 +39,7 @@ class Engine:
             df = self.spark.table(config["bronze"])
             df = self.adapter.transform(df)
 
-            enum_mappings = config.get("enums") or []
-            if enum_mappings:
-                df = apply_enum_mappings(self.spark, df, enum_mappings)
+            df = self.adapter.apply_features(self.spark, df, config)
 
             df = apply_hashing_strategy(df, config)
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pejo.adapters.dynamics import normalize_enum_mappings
+from pejo.features.enums import normalize_enum_mappings
 from pejo.core.hashing import normalize_hashing_config
 
 try:

@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from pejo.adapters.base import BaseAdapter
-import pejo.core.engine as engine_module
+import pejo.adapters.dataverse as dataverse_module
+from pejo.adapters.dataverse import DataverseAdapter
 from pejo.core.engine import Engine
 from pejo.schemas import load_metadata_from_yaml
 
@@ -11,6 +12,10 @@ from pejo.schemas import load_metadata_from_yaml
 class DummyDataFrame:
     def __init__(self):
         self.columns = ["recid", "dataareaid", "name"]
+
+    def withColumnRenamed(self, old: str, new: str):
+        self.columns = [new if c == old else c for c in self.columns]
+        return self
 
     def createOrReplaceTempView(self, _name: str):
         return None
@@ -174,11 +179,11 @@ enums:
         assert len(enum_mappings) == 1
         return df
 
-    monkeypatch.setattr(engine_module, "apply_enum_mappings", _fake_apply)
+    monkeypatch.setattr(dataverse_module, "apply_enum_mappings", _fake_apply)
 
     engine = Engine.from_yaml_dir(
         spark=DummySpark(),
-        adapter=DummyAdapter(),
+        adapter=DataverseAdapter(),
         schema_dir=tmp_path,
     )
 
@@ -298,6 +303,8 @@ hash_columns: [salesid, custaccount]
         assert config["business_key"] == ["salesid", "dataareaid"]
         assert config["hash_columns"] == ["salesid", "custaccount"]
         return df
+
+    import pejo.core.engine as engine_module
 
     monkeypatch.setattr(engine_module, "apply_hashing_strategy", _fake_hash)
 

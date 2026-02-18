@@ -70,7 +70,7 @@ Target-tabellen behöver ha kolumnerna:
 - `is_current` (boolean)
 
 ## Dynamics enums (GlobalOptionSetMetadata)
-Enum-logiken ligger i `pejo/adapters/dynamics.py` eftersom detta är Dynamics-specifik funktionalitet (inte generell core-logik).
+Enum-logiken ligger i `pejo/adapters/dataverse.py` eftersom detta är Dynamics-specifik funktionalitet (inte generell core-logik).
 
 För att mappa enum-koder till labels från Dynamics, lägg till `enums` i tabellens YAML:
 
