@@ -210,3 +210,33 @@ primary_key: recid
 
     assert any("CREATE TABLE IF NOT EXISTS pejo_run_log" in q for q in spark.sql_calls)
 
+
+
+def test_engine_runs_scd2_update_and_insert(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    update_calls = [q for q in spark.sql_calls if "UPDATE silver.sales.dimcustomer" in q]
+    insert_calls = [q for q in spark.sql_calls if "INSERT INTO silver.sales.dimcustomer" in q]
+
+    assert len(update_calls) == 1
+    assert len(insert_calls) == 1
+

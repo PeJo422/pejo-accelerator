@@ -41,10 +41,29 @@ tables:
 | `silver` | `string` | Ja | Target för Delta MERGE. |
 | `primary_key` | `string` eller `list[string]` | Nej | Normaliseras till lista och används i MERGE `ON`. Om saknas används adapterns `default_primary_key()`. |
 | `load_type` | `string` | Nej | Endast `delta_merge` stöds. Annat värde ger fel. |
-| `scdtype` | `string` | Nej | Metadata-fält som normaliseras till uppercase (t.ex. `SCD2`). |
+| `scdtype` | `string` | Nej | Styr beteende: `SCD1` (default, Delta MERGE) eller `SCD2` (historisering med `valid_from`, `valid_to`, `is_current`). |
 | `soft_delete.enabled` | `bool` | Nej | Om `true` läggs `WHEN MATCHED AND s.<column> = true THEN DELETE` till MERGE. |
 | `soft_delete.column` | `string` | Nej | Kolumn för soft delete-villkoret. |
 | `enums` | `list[mapping]` | Nej | Dynamics enum-lookup (GlobalOptionSetMetadata) före MERGE. |
+
+
+## SCD-beteende (implementerat)
+
+### `scdtype: SCD1` (default)
+- Kör vanlig Delta MERGE (`WHEN MATCHED UPDATE`, `WHEN NOT MATCHED INSERT`).
+- `soft_delete` stöds i detta läge.
+
+### `scdtype: SCD2`
+- Kör två SQL-steg:
+  1. `UPDATE` som stänger nuvarande version (`is_current=false`, `valid_to=current_timestamp()`) när någon tracked kolumn ändrats.
+  2. `INSERT` av ny version med `valid_from=current_timestamp()`, `valid_to=NULL`, `is_current=true` för nya eller ändrade rader.
+- Förändringsdetektion görs på alla icke-nyckelkolumner i källdatan.
+
+### Krav för SCD2-target
+Target-tabellen behöver ha kolumnerna:
+- `valid_from` (timestamp)
+- `valid_to` (timestamp, nullable)
+- `is_current` (boolean)
 
 ## Dynamics enums (GlobalOptionSetMetadata)
 Enum-logiken ligger i `pejo/adapters/dynamics.py` eftersom detta är Dynamics-specifik funktionalitet (inte generell core-logik).
