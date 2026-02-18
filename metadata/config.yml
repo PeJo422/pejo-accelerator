@@ -1,0 +1,4 @@
+hashing:
+  algorithm: sha2_256
+  separator: "||"
+  null_replacement: ""

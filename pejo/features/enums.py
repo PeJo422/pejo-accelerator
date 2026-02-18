@@ -9,34 +9,54 @@ from pyspark.sql import functions as F
 DEFAULT_ENUM_METADATA_TABLE = "globaloptionsetmetadata"
 
 
-def normalize_enum_mappings(config: dict[str, Any]) -> list[dict[str, str]]:
-    """Normalize enum mapping config from YAML for Dataverse/Dynamics sources."""
+def _normalize_one_mapping(raw: dict[str, Any], idx: int) -> dict[str, str]:
+    column = raw.get("column")
+    enum_name = raw.get("enum", raw.get("optionset"))
+    mapping = raw.get("mapping") or {}
 
-    mappings = config.get("enums") or []
+    if not column or not enum_name:
+        raise ValueError(f"`enum[{idx}]` requires `column` and `enum`")
+    if mapping and not isinstance(mapping, dict):
+        raise ValueError(f"`enum[{idx}].mapping` must be a mapping")
+
+    metadata_table = raw.get("metadata_table") or mapping.get("table") or DEFAULT_ENUM_METADATA_TABLE
+    option_name_column = raw.get("option_name_column") or mapping.get("enum_column", "optionsetname")
+    option_value_column = raw.get("option_value_column") or mapping.get("key_column", "optionvalue")
+    option_label_column = raw.get("option_label_column") or mapping.get("label_column", "label")
+    output_column = raw.get("output_column") or mapping.get("output_column", f"{column}_label")
+
+    return {
+        "column": str(column),
+        "optionset": str(enum_name),
+        "metadata_table": str(metadata_table),
+        "option_name_column": str(option_name_column),
+        "option_value_column": str(option_value_column),
+        "option_label_column": str(option_label_column),
+        "output_column": str(output_column),
+    }
+
+
+def normalize_enum_mappings(config: dict[str, Any]) -> list[dict[str, str]]:
+    """Normalize enum mapping config from YAML.
+
+    Supports both legacy `enums` and new `enum` attributes.
+    """
+
+    mappings = config.get("enum")
+    if mappings is None:
+        mappings = config.get("enums") or []
+
+    if isinstance(mappings, dict):
+        mappings = [mappings]
     if not isinstance(mappings, list):
-        raise ValueError("`enums` must be a list")
+        raise ValueError("`enum` must be a list (or mapping)")
 
     normalized: list[dict[str, str]] = []
     for idx, raw in enumerate(mappings):
         if not isinstance(raw, dict):
-            raise ValueError(f"`enums[{idx}]` must be a mapping")
+            raise ValueError(f"`enum[{idx}]` must be a mapping")
 
-        column = raw.get("column")
-        optionset = raw.get("optionset")
-        if not column or not optionset:
-            raise ValueError(f"`enums[{idx}]` requires `column` and `optionset`")
-
-        normalized.append(
-            {
-                "column": str(column),
-                "optionset": str(optionset),
-                "metadata_table": str(raw.get("metadata_table", DEFAULT_ENUM_METADATA_TABLE)),
-                "option_name_column": str(raw.get("option_name_column", "optionsetname")),
-                "option_value_column": str(raw.get("option_value_column", "optionvalue")),
-                "option_label_column": str(raw.get("option_label_column", "label")),
-                "output_column": str(raw.get("output_column", f"{column}_label")),
-            }
-        )
+        normalized.append(_normalize_one_mapping(raw, idx))
 
     return normalized
 
