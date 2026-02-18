@@ -49,11 +49,17 @@ def _normalize_column_settings(schema: dict[str, Any]) -> dict[str, dict[str, st
 
     result: dict[str, dict[str, str]] = {}
     for idx, entry in enumerate(raw_columns):
-        if not isinstance(entry, dict) or len(entry) != 1:
-            raise ValueError(f"`columns[{idx}]` must be a single-key mapping")
-        column_name, cfg = next(iter(entry.items()))
-        if not isinstance(cfg, dict):
-            raise ValueError(f"`columns[{idx}].{column_name}` must be a mapping")
+        column_name: str
+        cfg: dict[str, Any]
+        if isinstance(entry, dict) and "column" in entry:
+            column_name = str(entry["column"])
+            cfg = {k: v for k, v in entry.items() if k != "column"}
+        else:
+            if not isinstance(entry, dict) or len(entry) != 1:
+                raise ValueError(f"`columns[{idx}]` must be a single-key mapping or include `column`")
+            column_name, cfg = next(iter(entry.items()))
+            if not isinstance(cfg, dict):
+                raise ValueError(f"`columns[{idx}].{column_name}` must be a mapping")
 
         null_handling = str(cfg.get("null_handling", "")).lower()
         if null_handling not in {"", "error", "warning", "replace"}:
@@ -71,6 +77,9 @@ def _normalize_column_settings(schema: dict[str, Any]) -> dict[str, dict[str, st
                     f"`columns[{idx}].{column_name}` with null_handling=replace requires `null_replacement`"
                 )
             normalized["null_replacement"] = str(cfg.get("null_replacement"))
+
+        if "alias" in cfg:
+            normalized["alias"] = str(cfg.get("alias"))
 
         result[str(column_name)] = normalized
 

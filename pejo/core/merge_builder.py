@@ -1,15 +1,21 @@
 from __future__ import annotations
 
 
-def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None):
+def _target_column(column: str, column_aliases: dict[str, str] | None) -> str:
+    if not column_aliases:
+        return column
+    return column_aliases.get(column, column)
+
+
+def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None, column_aliases=None):
     if not keys:
         raise ValueError("Delta merge requires at least one primary key column")
 
-    join_condition = " AND ".join([f"t.{k} = s.{k}" for k in keys])
+    join_condition = " AND ".join([f"t.{_target_column(k, column_aliases)} = s.{k}" for k in keys])
 
-    update_clause = ",\n        ".join([f"t.{c} = s.{c}" for c in columns])
+    update_clause = ",\n        ".join([f"t.{_target_column(c, column_aliases)} = s.{c}" for c in columns])
 
-    insert_columns = ", ".join(columns)
+    insert_columns = ", ".join([_target_column(c, column_aliases) for c in columns])
     insert_values = ", ".join([f"s.{c}" for c in columns])
 
     merge_sql = f"""
@@ -34,7 +40,7 @@ def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None):
     return merge_sql
 
 
-def build_scd2_sql(target, source_view, keys, columns):
+def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
     if not keys:
         raise ValueError("SCD2 requires at least one primary key column")
 
@@ -42,16 +48,24 @@ def build_scd2_sql(target, source_view, keys, columns):
     if not tracked_columns:
         raise ValueError("SCD2 requires at least one non-key column to detect changes")
 
-    key_join_ts = " AND ".join([f"t.{k} = s.{k}" for k in keys])
-    key_join_tt = " AND ".join([f"t.{k} = s.{k}" for k in keys])
+    key_join_ts = " AND ".join([f"t.{_target_column(k, column_aliases)} = s.{k}" for k in keys])
+    key_join_tt = " AND ".join([f"t.{_target_column(k, column_aliases)} = s.{k}" for k in keys])
 
     def _cmp(col: str) -> str:
-        return f"COALESCE(CAST(t.{col} AS STRING), '__NULL__') <> COALESCE(CAST(s.{col} AS STRING), '__NULL__')"
+        target_col = _target_column(col, column_aliases)
+        return f"COALESCE(CAST(t.{target_col} AS STRING), '__NULL__') <> COALESCE(CAST(s.{col} AS STRING), '__NULL__')"
 
     change_condition = " OR ".join([_cmp(c) for c in tracked_columns])
 
-    base_columns = ", ".join(columns)
-    base_values = ", ".join([f"s.{c}" for c in columns])
+    base_columns = ", ".join([_target_column(c, column_aliases) for c in columns])
+    base_values = ", ".join(
+        [
+            f"s.{c} AS {_target_column(c, column_aliases)}"
+            if _target_column(c, column_aliases) != c
+            else f"s.{c}"
+            for c in columns
+        ]
+    )
 
     update_sql = f"""
     UPDATE {target} t
@@ -71,14 +85,14 @@ def build_scd2_sql(target, source_view, keys, columns):
     LEFT JOIN {target} t
       ON {key_join_tt}
      AND t.is_current = true
-    WHERE t.{keys[0]} IS NULL
+    WHERE t.{_target_column(keys[0], column_aliases)} IS NULL
        OR ({change_condition})
     """
 
     return update_sql, insert_sql
 
 
-def build_merge_sql(target, source_view, keys, columns, soft_delete=None):
+def build_merge_sql(target, source_view, keys, columns, soft_delete=None, column_aliases=None):
     """Backward compatible alias. Kept to avoid breaking callers."""
 
     return build_delta_merge_sql(
@@ -87,4 +101,5 @@ def build_merge_sql(target, source_view, keys, columns, soft_delete=None):
         keys=keys,
         columns=columns,
         soft_delete=soft_delete,
+        column_aliases=column_aliases,
     )
