@@ -151,9 +151,9 @@ hashing:
 ```
 
 ```yaml
-# fact_salestable.yml
+# salestable.yml
 table: SalesTable
-domain: finance
+domain: Sales
 bronze: bronze_salestable
 silver: silver_salestable
 
