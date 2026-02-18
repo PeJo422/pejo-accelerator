@@ -5,9 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from pejo.core.logging import RunLogger
-from pejo.core.hashing import apply_hashing_strategy
-from pejo.core.merge_builder import build_delta_merge_sql, build_scd2_sql
-from pejo.adapters.dynamics import apply_enum_mappings
+from pejo.core.merge_builder import build_delta_merge_sql
 from pejo.schemas import load_metadata_from_yaml
 
 
@@ -40,12 +38,6 @@ class Engine:
             df = self.spark.table(config["bronze"])
             df = self.adapter.transform(df)
 
-            enum_mappings = config.get("enums") or []
-            if enum_mappings:
-                df = apply_enum_mappings(self.spark, df, enum_mappings)
-
-            df = apply_hashing_strategy(df, config)
-
             df.createOrReplaceTempView("source_view")
 
             columns = df.columns
@@ -55,27 +47,15 @@ class Engine:
             if load_type != "delta_merge":
                 raise ValueError(f"Unsupported load_type '{load_type}'. Only 'delta_merge' is supported.")
 
-            scd_type = str(config.get("scdtype", "SCD1")).upper()
-            if scd_type == "SCD2":
-                update_sql, insert_sql = build_scd2_sql(
-                    target=config["silver"],
-                    source_view="source_view",
-                    keys=keys,
-                    columns=columns,
-                )
-                self.spark.sql(update_sql)
-                self.spark.sql(insert_sql)
-            elif scd_type == "SCD1":
-                merge_sql = build_delta_merge_sql(
-                    target=config["silver"],
-                    source_view="source_view",
-                    keys=keys,
-                    columns=columns,
-                    soft_delete=config.get("soft_delete"),
-                )
-                self.spark.sql(merge_sql)
-            else:
-                raise ValueError(f"Unsupported scdtype '{scd_type}'. Use 'SCD1' or 'SCD2'.")
+            merge_sql = build_delta_merge_sql(
+                target=config["silver"],
+                source_view="source_view",
+                keys=keys,
+                columns=columns,
+                soft_delete=config.get("soft_delete"),
+            )
+
+            self.spark.sql(merge_sql)
             logger.end(status="SUCCESS", rows_source=df.count())
         except Exception as exc:
             logger.end(status="FAILED", error_message=str(exc))

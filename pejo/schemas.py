@@ -3,14 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from pejo.adapters.dynamics import normalize_enum_mappings
-from pejo.core.hashing import normalize_hashing_config
-
-try:
-    import yaml as _pyyaml
-except ModuleNotFoundError:
-    _pyyaml = None
-
 REQUIRED_FIELDS = {"table", "domain", "bronze", "silver"}
 
 
@@ -136,8 +128,6 @@ class _MiniYamlParser:
 
 
 def _load_yaml_text(text: str) -> Any:
-    if _pyyaml is not None:
-        return _pyyaml.safe_load(text)
     return _MiniYamlParser(text).parse()
 
 
@@ -150,50 +140,6 @@ def _normalize_primary_key(schema: dict[str, Any]) -> list[str]:
         raise ValueError("`primary_key` must be a string or a list of strings")
 
     return [str(item) for item in primary_key]
-
-
-
-
-def _normalize_scd_type(schema: dict[str, Any]) -> str:
-    scd_type = schema.get("scdtype", "SCD1")
-    return str(scd_type).upper()
-
-
-
-def _normalize_enums(schema: dict[str, Any]) -> list[dict[str, str]]:
-    return normalize_enum_mappings(schema)
-
-
-
-def _normalize_enum_columns(schema: dict[str, Any]) -> list[dict[str, str]]:
-    enum_columns = schema.get("enum_columns") or {}
-    if not enum_columns:
-        return []
-    if not isinstance(enum_columns, dict):
-        raise ValueError("`enum_columns` must be a mapping")
-
-    normalized: list[dict[str, str]] = []
-    for column, cfg in enum_columns.items():
-        if not isinstance(cfg, dict):
-            raise ValueError(f"`enum_columns.{column}` must be a mapping")
-
-        optionset = cfg.get("optionset")
-        if not optionset:
-            raise ValueError(f"`enum_columns.{column}` requires `optionset`")
-
-        normalized.append(
-            {
-                "column": str(column),
-                "optionset": str(optionset),
-                "metadata_table": str(cfg.get("metadata_table", "globaloptionsetmetadata")),
-                "option_name_column": str(cfg.get("option_name_column", "optionsetname")),
-                "option_value_column": str(cfg.get("key_column", cfg.get("option_value_column", "optionvalue"))),
-                "option_label_column": str(cfg.get("label_column", cfg.get("option_label_column", "label"))),
-                "output_column": str(cfg.get("output_column", f"{column}_label")),
-            }
-        )
-
-    return normalized
 
 
 def _validate_schema(schema: dict[str, Any], schema_path: Path) -> None:
@@ -231,9 +177,6 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
             _validate_schema(entry, schema_path)
             normalized = dict(entry)
             normalized["primary_key"] = _normalize_primary_key(normalized)
-            normalized["scdtype"] = _normalize_scd_type(normalized)
-            normalized["enums"] = _normalize_enums(normalized) + _normalize_enum_columns(normalized)
-            normalized.update(normalize_hashing_config(normalized))
 
             table_name = str(normalized["table"])
             metadata[table_name] = normalized
