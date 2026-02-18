@@ -22,6 +22,16 @@ class TableListRunResult:
 
 
 @dataclass(frozen=True)
+class TableMetadata:
+    table: str
+    domain: str
+    source: str
+    bronze: str
+    silver: str
+    metadata: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class DryRunResult:
     table: str
     sql_statements: list[str]
@@ -77,6 +87,50 @@ class Engine:
     def dry_run(self, table_name: str) -> DryRunResult:
         _df, sql_statements = self._plan_for_table(table_name)
         return DryRunResult(table=table_name, sql_statements=sql_statements)
+
+    def list_tables(
+        self,
+        selector: str | None = None,
+        source: str | None = None,
+        domain: str | None = None,
+    ) -> list[TableMetadata]:
+        if selector is not None and (source is not None or domain is not None):
+            raise ValueError("Use either selector or explicit source/domain filters")
+
+        selector_value = str(selector).lower() if selector is not None else None
+        source_value = str(source).lower() if source is not None else None
+        domain_value = str(domain).lower() if domain is not None else None
+
+        if selector_value is not None:
+            source_value = selector_value
+            domain_value = selector_value
+
+        results: list[TableMetadata] = []
+        for table_name, cfg in sorted(self.metadata.items()):
+            table_source = str(cfg.get("source", "default"))
+            table_domain = str(cfg.get("domain", ""))
+
+            source_match = source_value is None or table_source.lower() == source_value
+            domain_match = domain_value is None or table_domain.lower() == domain_value
+
+            if selector_value is not None:
+                if table_source.lower() != selector_value and table_domain.lower() != selector_value:
+                    continue
+            elif not (source_match and domain_match):
+                continue
+
+            results.append(
+                TableMetadata(
+                    table=table_name,
+                    domain=table_domain,
+                    source=table_source,
+                    bronze=str(cfg.get("bronze", "")),
+                    silver=str(cfg.get("silver", "")),
+                    metadata=cfg,
+                )
+            )
+
+        return results
 
     def validate_only(
         self,

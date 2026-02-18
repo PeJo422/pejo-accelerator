@@ -501,6 +501,91 @@ hash_columns: [salesid]
     assert metadata["salestable"]["hashing"].algorithm == "sha2_512"
 
 
+def test_loads_source_specific_config_override(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    source_root = tmp_path / "sources" / "dynamics"
+    (source_root / "schema").mkdir(parents=True, exist_ok=True)
+    (source_root / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_512
+lake_parameter: source-override
+""".strip(),
+        encoding="utf-8",
+    )
+    (source_root / "schema" / "custtable.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    metadata = load_metadata_from_yaml(tmp_path)
+    cfg = metadata["CustTable"]
+    assert cfg["source"] == "dynamics"
+    assert cfg["hashing"].algorithm == "sha2_512"
+    assert cfg["config"]["lake_parameter"] == "source-override"
+
+
+def test_engine_list_tables_filters_source_and_domain(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    dyn_schema = tmp_path / "sources" / "dynamics" / "schema"
+    m3_schema = tmp_path / "sources" / "m3" / "schema" / "files"
+    dyn_schema.mkdir(parents=True, exist_ok=True)
+    m3_schema.mkdir(parents=True, exist_ok=True)
+
+    (dyn_schema / "cust.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+    (m3_schema / "item.yml").write_text(
+        """
+table: ItemMaster
+domain: MasterData
+bronze: bronze.master.item
+silver: silver.master.item
+""".strip(),
+        encoding="utf-8",
+    )
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    all_tables = engine.list_tables()
+    assert [t.table for t in all_tables] == ["CustTable", "ItemMaster"]
+
+    dynamics_tables = engine.list_tables("dynamics")
+    assert [t.table for t in dynamics_tables] == ["CustTable"]
+
+    masterdata_tables = engine.list_tables(domain="masterdata")
+    assert [t.table for t in masterdata_tables] == ["ItemMaster"]
+
+
 
 def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
     (tmp_path / "platform.yaml").write_text(

@@ -141,18 +141,49 @@ def _load_yaml_text(text: str) -> Any:
     return _MiniYamlParser(text).parse()
 
 
+def _load_yaml_mapping(path: Path) -> dict[str, Any]:
+    raw = _load_yaml_text(path.read_text(encoding="utf-8"))
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"Config must be a mapping in {path}")
+    return raw
+
+
 def _load_platform_config(schema_dir: Path) -> dict[str, Any]:
     for name in ("config.yml", "config.yaml", "platform.yaml", "platform.yml"):
-        candidates = [schema_dir / name, *schema_dir.glob(f"**/{name}")]
-        for path in candidates:
-            if path.exists():
-                raw = _load_yaml_text(path.read_text(encoding="utf-8"))
-                if raw is None:
-                    return {}
-                if not isinstance(raw, dict):
-                    raise ValueError(f"Platform config must be a mapping in {path}")
-                return raw
+        path = schema_dir / name
+        if path.exists():
+            return _load_yaml_mapping(path)
     return {}
+
+
+def _get_source_name(schema_dir: Path, schema_path: Path) -> str | None:
+    relative = schema_path.relative_to(schema_dir)
+    parts = relative.parts
+    if len(parts) < 3:
+        return None
+    if parts[0] != "sources":
+        return None
+    return parts[1]
+
+
+def _load_source_configs(schema_dir: Path) -> dict[str, dict[str, Any]]:
+    sources_root = schema_dir / "sources"
+    if not sources_root.exists():
+        return {}
+
+    source_configs: dict[str, dict[str, Any]] = {}
+    for source_dir in sorted(path for path in sources_root.iterdir() if path.is_dir()):
+        for name in ("config.yml", "config.yaml"):
+            config_path = source_dir / name
+            if config_path.exists():
+                source_configs[source_dir.name] = _load_yaml_mapping(config_path)
+                break
+        else:
+            source_configs[source_dir.name] = {}
+
+    return source_configs
 
 
 
@@ -234,7 +265,7 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
 
     metadata: dict[str, dict[str, Any]] = {}
     platform_config = _load_platform_config(directory)
-    global_hashing = normalize_global_hash_config(platform_config)
+    source_configs = _load_source_configs(directory)
 
     for schema_path in sorted(directory.glob("**/*.y*ml")):
         if schema_path.name in {"platform.yaml", "platform.yml", "config.yaml", "config.yml"}:
@@ -242,6 +273,12 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
         raw = _load_yaml_text(schema_path.read_text(encoding="utf-8"))
         if raw is None:
             continue
+
+        source_name = _get_source_name(directory, schema_path)
+        merged_config = dict(platform_config)
+        if source_name:
+            merged_config.update(source_configs.get(source_name, {}))
+        global_hashing = normalize_global_hash_config(merged_config)
 
         entries = raw.get("tables", []) if isinstance(raw, dict) and "tables" in raw else [raw]
 
@@ -255,6 +292,8 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
             normalized["scdtype"] = _normalize_scd_type(normalized)
             normalized["enums"] = _normalize_enums(normalized) + _normalize_enum_columns(normalized)
             normalized.update(normalize_hashing_config(normalized, global_hashing))
+            normalized["source"] = str(normalized.get("source") or source_name or "default")
+            normalized["config"] = merged_config
 
             table_name = str(normalized["table"])
             metadata[table_name] = normalized

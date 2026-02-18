@@ -3,7 +3,7 @@
 PEJO acceleratorn kör metadata-styrda **Delta MERGE**-flöden i Fabric/Spark.
 
 ## YAML-scheman
-Lägg schemafiler i en katalog, t.ex. `schemas/`.
+Lägg schemafiler under `sources/<source>/schema/` (inklusive underkataloger som `files/`).
 
 ### Exempel
 
@@ -30,6 +30,28 @@ tables:
       column: isdeleted
     load_type: delta_merge
 ```
+
+
+
+### Rekommenderad struktur
+
+```text
+metadata/
+  config.yml                  # globala parametrar
+  sources/
+    dynamics/
+      config.yml              # source-specifik override
+      schema/
+        sales/
+          custtable.yml
+    m3/
+      config.yml
+      schema/
+        files/
+          itemmaster.yml
+```
+
+Globala parametrar i `config.yml` (t.ex. `hashing.algorithm`, `lake_parameter`, `bronze_lake`, `silver_lake`) kan överstyras per source i `sources/<source>/config.yml`.
 
 ## YAML-fält som stöds i koden
 
@@ -216,6 +238,14 @@ engine.run_domain("sales")
 
 # Kör en lista av tabeller
 engine.run_table_list(["custtable", "salestable"])
+
+# Lista metadata för alla tabeller
+for table in engine.list_tables():
+    print(table.table, table.source, table.domain)
+
+# Filtrera metadata per source eller domain
+engine.list_tables("dynamics")
+engine.list_tables(domain="sales")
 
 # Validera metadata/SQL-plan utan att skriva till target
 engine.validate_only(table_name="custtable")
