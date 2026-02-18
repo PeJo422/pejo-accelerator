@@ -3,11 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-try:
-    import yaml as _pyyaml
-except ModuleNotFoundError:
-    _pyyaml = None
-
 REQUIRED_FIELDS = {"table", "domain", "bronze", "silver"}
 
 
@@ -133,8 +128,6 @@ class _MiniYamlParser:
 
 
 def _load_yaml_text(text: str) -> Any:
-    if _pyyaml is not None:
-        return _pyyaml.safe_load(text)
     return _MiniYamlParser(text).parse()
 
 
@@ -148,43 +141,6 @@ def _normalize_primary_key(schema: dict[str, Any]) -> list[str]:
 
     return [str(item) for item in primary_key]
 
-
-
-
-def _normalize_scd_type(schema: dict[str, Any]) -> str:
-    scd_type = schema.get("scdtype", "SCD1")
-    return str(scd_type).upper()
-
-
-
-def _normalize_enums(schema: dict[str, Any]) -> list[dict[str, str]]:
-    enums = schema.get("enums") or []
-    if not isinstance(enums, list):
-        raise ValueError("`enums` must be a list")
-
-    normalized: list[dict[str, str]] = []
-    for idx, enum_map in enumerate(enums):
-        if not isinstance(enum_map, dict):
-            raise ValueError(f"`enums[{idx}]` must be a mapping")
-
-        column = enum_map.get("column")
-        optionset = enum_map.get("optionset")
-        if not column or not optionset:
-            raise ValueError(f"`enums[{idx}]` requires `column` and `optionset`")
-
-        normalized.append(
-            {
-                "column": str(column),
-                "optionset": str(optionset),
-                "metadata_table": str(enum_map.get("metadata_table", "globaloptionsetmetadata")),
-                "option_name_column": str(enum_map.get("option_name_column", "optionsetname")),
-                "option_value_column": str(enum_map.get("option_value_column", "optionvalue")),
-                "option_label_column": str(enum_map.get("option_label_column", "label")),
-                "output_column": str(enum_map.get("output_column", f"{column}_label")),
-            }
-        )
-
-    return normalized
 
 def _validate_schema(schema: dict[str, Any], schema_path: Path) -> None:
     missing = REQUIRED_FIELDS.difference(schema.keys())
@@ -221,8 +177,6 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
             _validate_schema(entry, schema_path)
             normalized = dict(entry)
             normalized["primary_key"] = _normalize_primary_key(normalized)
-            normalized["scdtype"] = _normalize_scd_type(normalized)
-            normalized["enums"] = _normalize_enums(normalized)
 
             table_name = str(normalized["table"])
             metadata[table_name] = normalized

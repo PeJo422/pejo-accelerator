@@ -6,7 +6,6 @@ from typing import Any
 
 from pejo.core.logging import RunLogger
 from pejo.core.merge_builder import build_delta_merge_sql
-from pejo.enums import apply_enum_mappings
 from pejo.schemas import load_metadata_from_yaml
 
 
@@ -38,10 +37,6 @@ class Engine:
 
             df = self.spark.table(config["bronze"])
             df = self.adapter.transform(df)
-
-            enum_mappings = config.get("enums") or []
-            if enum_mappings:
-                df = apply_enum_mappings(self.spark, df, enum_mappings)
 
             df.createOrReplaceTempView("source_view")
 
