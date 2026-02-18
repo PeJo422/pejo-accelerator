@@ -4,10 +4,28 @@ from datetime import datetime
 
 class RunLogger:
 
-    def __init__(self, spark):
+    def __init__(self, spark, log_table: str = "pejo_run_log"):
         self.spark = spark
+        self.log_table = log_table
+
+    def _ensure_log_table(self):
+        self.spark.sql(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self.log_table} (
+                run_id STRING,
+                table_name STRING,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                rows_source BIGINT,
+                status STRING,
+                error_message STRING
+            )
+            USING DELTA
+            """.strip()
+        )
 
     def start(self, table_name):
+        self._ensure_log_table()
         self.run_id = str(uuid.uuid4())
         self.table_name = table_name
         self.start_time = datetime.utcnow()
@@ -39,4 +57,4 @@ class RunLogger:
             ]
         )
 
-        log_df.write.mode("append").saveAsTable("pejo_run_log")
+        log_df.write.mode("append").saveAsTable(self.log_table)
