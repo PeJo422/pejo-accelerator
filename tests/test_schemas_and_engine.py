@@ -275,6 +275,36 @@ scdtype: SCD2
     assert len(insert_calls) == 1
 
 
+
+
+def test_engine_applies_column_aliases_in_scd2_insert_select(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+columns:
+  - column: name
+    alias: CustomerName
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    insert_call = next(q for q in spark.sql_calls if "INSERT INTO silver.sales.dimcustomer" in q)
+    assert "INSERT INTO silver.sales.dimcustomer (recid, dataareaid, CustomerName, valid_from, valid_to, is_current)" in insert_call
+    assert "SELECT s.recid, s.dataareaid, s.name AS CustomerName, current_timestamp()" in insert_call
 def test_engine_dry_run_returns_sql_without_execution(tmp_path: Path):
     (tmp_path / "sales.yml").write_text(
         """

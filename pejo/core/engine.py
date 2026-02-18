@@ -132,6 +132,11 @@ class Engine:
 
         columns = df.columns
         keys = config.get("primary_key") or self.adapter.default_primary_key()
+        column_aliases = {
+            str(column_name): str(settings.get("alias"))
+            for column_name, settings in (config.get("columns") or {}).items()
+            if settings.get("alias")
+        }
 
         load_type = str(config.get("load_type", "delta_merge")).lower()
         if load_type != "delta_merge":
@@ -144,6 +149,7 @@ class Engine:
                 source_view="source_view",
                 keys=keys,
                 columns=columns,
+                column_aliases=column_aliases,
             )
             return df, [update_sql, insert_sql]
         if scd_type == "SCD1":
@@ -153,6 +159,7 @@ class Engine:
                 keys=keys,
                 columns=columns,
                 soft_delete=config.get("soft_delete"),
+                column_aliases=column_aliases,
             )
             return df, [merge_sql]
 
