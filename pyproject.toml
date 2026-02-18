@@ -10,7 +10,8 @@ authors = [
   {name = "Your Name"}
 ]
 dependencies = [
-  "pyspark"
+  "pyspark",
+  "pyyaml"
 ]
 requires-python = ">=3.9"
 
