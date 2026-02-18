@@ -15,4 +15,3 @@ hash_columns:
   - currency
   - blocked
   - modifieddatetime
-hash_algorithm: sha2_256

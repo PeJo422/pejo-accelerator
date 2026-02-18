@@ -248,6 +248,16 @@ scdtype: SCD2
 
 
 def test_loads_hashing_and_enum_columns_from_yaml(tmp_path: Path):
+    (tmp_path / "platform.yaml").write_text(
+        """
+hashing:
+  algorithm: sha2_512
+  separator: "||"
+  null_replacement: ""
+""".strip(),
+        encoding="utf-8",
+    )
+
     (tmp_path / "hash.yml").write_text(
         """
 table: SalesTable
@@ -257,7 +267,6 @@ silver: silver_salestable
 primary_key: [recid, dataareaid]
 business_key: [salesid, dataareaid]
 hash_columns: [salesid, custaccount, salesstatus, invoiceaccount, modifieddatetime]
-hash_algorithm: sha2_512
 enum_columns:
   salesstatus:
     metadata_table: bronze_enum_metadata
@@ -273,7 +282,7 @@ enum_columns:
 
     assert cfg["business_key"] == ["salesid", "dataareaid"]
     assert cfg["hash_columns"][0] == "salesid"
-    assert cfg["hash_algorithm"] == "sha2_512"
+    assert cfg["hashing"].algorithm == "sha2_512"
 
     assert len(cfg["enums"]) == 1
     assert cfg["enums"][0]["column"] == "salesstatus"
@@ -283,6 +292,16 @@ enum_columns:
 
 
 def test_engine_applies_hashing_strategy(tmp_path: Path, monkeypatch):
+    (tmp_path / "platform.yaml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+  separator: "||"
+  null_replacement: ""
+""".strip(),
+        encoding="utf-8",
+    )
+
     (tmp_path / "hash.yml").write_text(
         """
 table: SalesTable
@@ -316,4 +335,35 @@ hash_columns: [salesid, custaccount]
 
     engine.run("SalesTable")
     assert calls["value"] == 1
+
+
+
+def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
+    (tmp_path / "platform.yaml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+  separator: "||"
+  null_replacement: ""
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "bad.yml").write_text(
+        """
+table: SalesTable
+domain: Finance
+bronze: bronze_salestable
+silver: silver_salestable
+primary_key: recid
+hash_algorithm: sha2_512
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        load_metadata_from_yaml(tmp_path)
+        assert False, "Expected ValueError for table-level hashing override"
+    except ValueError as exc:
+        assert "Table-level hashing overrides are not allowed" in str(exc)
 

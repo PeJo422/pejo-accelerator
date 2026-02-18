@@ -2,6 +2,7 @@
 
 Exempelfiler för PEJO acceleratorn:
 
+- `platform.yaml`: global hashing-standard för alla tabeller i mappen.
 - `custtable.yml`: dimensionslik tabell med `SCD2` + hashing.
 - `fact_salestable.yml`: faktatabell med `SCD1`, enum-mappning och soft delete.
 

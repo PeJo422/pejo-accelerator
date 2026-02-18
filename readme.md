@@ -48,7 +48,7 @@ tables:
 | `enum_columns` | `mapping` | Nej | Kortform för enum-mappningar per kolumn (normaliseras till `enums`). |
 | `business_key` | `string` eller `list[string]` | Nej | Kolumner för business key-hash (`business_key_hash`). |
 | `hash_columns` | `string` eller `list[string]` | Nej | Kolumner för rad-hash (`row_hash`). |
-| `hash_algorithm` | `string` | Nej | `sha2_256` (default), `sha2_512` eller `md5`. |
+| `hash_algorithm` | `string` | Nej | **Ej tillåten per tabell**. Sätts globalt i `platform.yaml` under `hashing.algorithm`. |
 
 
 ## SCD-beteende (implementerat)
@@ -105,7 +105,17 @@ Engine gör då lookup mot metadata-tabellen och skapar label-kolumnen innan MER
 
 ## Business key och hashing (implementerat)
 
-Ni kan nu konfigurera hash-strategi i YAML, t.ex.:
+Hash-strategin styrs nu globalt i `platform.yaml` (inte per tabell):
+
+```yaml
+# platform.yaml
+hashing:
+  algorithm: sha2_256
+  separator: "||"
+  null_replacement: ""
+```
+
+Per tabell anger ni endast vilka kolumner som ska hash:as:
 
 ```yaml
 business_key:
@@ -118,10 +128,6 @@ hash_columns:
   - salesstatus
   - invoiceaccount
   - modifieddatetime
-
-hash_algorithm: sha2_256   # valfritt (sha2_256|sha2_512|md5)
-hash_separator: "||"        # valfritt
-hash_null_replacement: ""   # valfritt
 ```
 
 Engine skapar då:
@@ -130,9 +136,20 @@ Engine skapar då:
 
 Detta görs efter enum-berikning och före MERGE/SCD2-SQL.
 
+Om en tabell försöker sätta `hash_algorithm`, `hash_separator` eller `hash_null_replacement` så kastas ett fel (fail fast).
+
 ## Exempel enligt Finance-mönstret
 
 ```yaml
+# platform.yaml
+hashing:
+  algorithm: sha2_256
+  separator: "||"
+  null_replacement: ""
+```
+
+```yaml
+# fact_salestable.yml
 table: SalesTable
 domain: finance
 bronze: bronze_salestable

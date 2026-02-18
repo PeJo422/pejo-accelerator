@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pejo.features.enums import normalize_enum_mappings
-from pejo.core.hashing import normalize_hashing_config
+from pejo.core.hashing import normalize_global_hash_config, normalize_hashing_config
 
 try:
     import yaml as _pyyaml
@@ -141,6 +141,21 @@ def _load_yaml_text(text: str) -> Any:
     return _MiniYamlParser(text).parse()
 
 
+def _load_platform_config(schema_dir: Path) -> dict[str, Any]:
+    for name in ("platform.yaml", "platform.yml"):
+        path = schema_dir / name
+        if path.exists():
+            raw = _load_yaml_text(path.read_text(encoding="utf-8"))
+            if raw is None:
+                return {}
+            if not isinstance(raw, dict):
+                raise ValueError(f"Platform config must be a mapping in {path}")
+            return raw
+    return {}
+
+
+
+
 def _normalize_primary_key(schema: dict[str, Any]) -> list[str]:
     primary_key = schema.get("primary_key") or []
 
@@ -216,8 +231,12 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
         raise FileNotFoundError(f"Schema directory does not exist: {directory}")
 
     metadata: dict[str, dict[str, Any]] = {}
+    platform_config = _load_platform_config(directory)
+    global_hashing = normalize_global_hash_config(platform_config)
 
     for schema_path in sorted(directory.glob("*.y*ml")):
+        if schema_path.name in {"platform.yaml", "platform.yml"}:
+            continue
         raw = _load_yaml_text(schema_path.read_text(encoding="utf-8"))
         if raw is None:
             continue
@@ -233,7 +252,7 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
             normalized["primary_key"] = _normalize_primary_key(normalized)
             normalized["scdtype"] = _normalize_scd_type(normalized)
             normalized["enums"] = _normalize_enums(normalized) + _normalize_enum_columns(normalized)
-            normalized.update(normalize_hashing_config(normalized))
+            normalized.update(normalize_hashing_config(normalized, global_hashing))
 
             table_name = str(normalized["table"])
             metadata[table_name] = normalized
