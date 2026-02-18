@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+import warnings
 
 from pyspark.sql import DataFrame
 from pyspark.sql import Column
@@ -16,13 +17,17 @@ FORBIDDEN_TABLE_HASH_KEYS = {"hash_algorithm", "hash_separator", "hash_null_repl
 class HashConfig:
     algorithm: str
     separator: str
-    null_replacement: str
 
 
 def normalize_global_hash_config(platform_config: dict[str, Any]) -> HashConfig:
     hashing = platform_config.get("hashing") or {}
     if not isinstance(hashing, dict):
         raise ValueError("`hashing` in platform config must be a mapping")
+
+    if "null_replacement" in hashing:
+        raise ValueError(
+            "Global hashing.null_replacement is not supported. Configure null handling per table/column in YAML."
+        )
 
     algorithm = str(hashing.get("algorithm", "sha2_256")).lower()
     if algorithm not in SUPPORTED_HASH_ALGOS:
@@ -32,8 +37,44 @@ def normalize_global_hash_config(platform_config: dict[str, Any]) -> HashConfig:
     return HashConfig(
         algorithm=algorithm,
         separator=str(hashing.get("separator", "||")),
-        null_replacement=str(hashing.get("null_replacement", "")),
     )
+
+
+def _normalize_column_settings(schema: dict[str, Any]) -> dict[str, dict[str, str]]:
+    raw_columns = schema.get("columns") or []
+    if not raw_columns:
+        return {}
+    if not isinstance(raw_columns, list):
+        raise ValueError("`columns` must be a list")
+
+    result: dict[str, dict[str, str]] = {}
+    for idx, entry in enumerate(raw_columns):
+        if not isinstance(entry, dict) or len(entry) != 1:
+            raise ValueError(f"`columns[{idx}]` must be a single-key mapping")
+        column_name, cfg = next(iter(entry.items()))
+        if not isinstance(cfg, dict):
+            raise ValueError(f"`columns[{idx}].{column_name}` must be a mapping")
+
+        null_handling = str(cfg.get("null_handling", "")).lower()
+        if null_handling not in {"", "error", "warning", "replace"}:
+            raise ValueError(
+                f"`columns[{idx}].{column_name}.null_handling` must be one of: error, warning, replace"
+            )
+
+        normalized: dict[str, str] = {}
+        if null_handling:
+            normalized["null_handling"] = null_handling
+
+        if null_handling == "replace":
+            if "null_replacement" not in cfg:
+                raise ValueError(
+                    f"`columns[{idx}].{column_name}` with null_handling=replace requires `null_replacement`"
+                )
+            normalized["null_replacement"] = str(cfg.get("null_replacement"))
+
+        result[str(column_name)] = normalized
+
+    return result
 
 
 def normalize_hashing_config(schema: dict[str, Any], hash_config: HashConfig) -> dict[str, Any]:
@@ -60,14 +101,48 @@ def normalize_hashing_config(schema: dict[str, Any], hash_config: HashConfig) ->
     return {
         "business_key": [str(c) for c in business_key],
         "hash_columns": [str(c) for c in hash_columns],
+        "columns": _normalize_column_settings(schema),
         "hashing": hash_config,
     }
 
 
-def compute_hash(df: DataFrame, columns: list[str], config: HashConfig) -> Column:
+def _apply_null_handling(df: DataFrame, config: dict[str, Any]) -> DataFrame:
+    column_settings = config.get("columns") or {}
+    if not column_settings:
+        return df
+
+    result = df
+    for column_name, rules in column_settings.items():
+        if column_name not in result.columns:
+            raise ValueError(f"Column settings reference unknown source column '{column_name}'")
+
+        mode = rules.get("null_handling", "")
+        if not mode:
+            continue
+
+        has_nulls = result.filter(F.col(column_name).isNull()).limit(1).count() > 0
+        if not has_nulls:
+            continue
+
+        if mode == "error":
+            raise ValueError(f"Null value detected in column '{column_name}' with null_handling=error")
+        if mode == "warning":
+            warnings.warn(
+                f"Null value detected in column '{column_name}' with null_handling=warning", UserWarning
+            )
+            continue
+        if mode == "replace":
+            replacement = str(rules.get("null_replacement", ""))
+            result = result.withColumn(column_name, F.coalesce(F.col(column_name), F.lit(replacement)))
+
+    return result
+
+
+def compute_hash(df: DataFrame, columns: list[str], config: HashConfig, replacements: dict[str, str]) -> Column:
     ordered_columns = sorted({str(c) for c in columns})
     processed_cols = [
-        F.coalesce(F.col(col_name).cast("string"), F.lit(config.null_replacement)) for col_name in ordered_columns
+        F.coalesce(F.col(col_name).cast("string"), F.lit(replacements.get(col_name, "")))
+        for col_name in ordered_columns
     ]
     payload = F.concat_ws(config.separator, *processed_cols)
 
@@ -89,11 +164,16 @@ def apply_hashing_strategy(df: DataFrame, config: dict[str, Any]) -> DataFrame:
     if not isinstance(hash_config, HashConfig):
         raise ValueError("Missing normalized global hashing config on table metadata")
 
-    result = df
+    result = _apply_null_handling(df, config)
+    replacement_map = {
+        column_name: str(settings.get("null_replacement", ""))
+        for column_name, settings in (config.get("columns") or {}).items()
+    }
+
     if business_key:
-        result = result.withColumn("business_key_hash", compute_hash(result, business_key, hash_config))
+        result = result.withColumn("business_key_hash", compute_hash(result, business_key, hash_config, replacement_map))
 
     if hash_columns:
-        result = result.withColumn("row_hash", compute_hash(result, hash_columns, hash_config))
+        result = result.withColumn("row_hash", compute_hash(result, hash_columns, hash_config, replacement_map))
 
     return result

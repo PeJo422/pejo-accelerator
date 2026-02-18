@@ -142,15 +142,16 @@ def _load_yaml_text(text: str) -> Any:
 
 
 def _load_platform_config(schema_dir: Path) -> dict[str, Any]:
-    for name in ("platform.yaml", "platform.yml"):
-        path = schema_dir / name
-        if path.exists():
-            raw = _load_yaml_text(path.read_text(encoding="utf-8"))
-            if raw is None:
-                return {}
-            if not isinstance(raw, dict):
-                raise ValueError(f"Platform config must be a mapping in {path}")
-            return raw
+    for name in ("config.yml", "config.yaml", "platform.yaml", "platform.yml"):
+        candidates = [schema_dir / name, *schema_dir.glob(f"**/{name}")]
+        for path in candidates:
+            if path.exists():
+                raw = _load_yaml_text(path.read_text(encoding="utf-8"))
+                if raw is None:
+                    return {}
+                if not isinstance(raw, dict):
+                    raise ValueError(f"Platform config must be a mapping in {path}")
+                return raw
     return {}
 
 
@@ -181,6 +182,7 @@ def _normalize_enums(schema: dict[str, Any]) -> list[dict[str, str]]:
 
 
 def _normalize_enum_columns(schema: dict[str, Any]) -> list[dict[str, str]]:
+    """Backward-compatible parser for legacy `enum_columns` format."""
     enum_columns = schema.get("enum_columns") or {}
     if not enum_columns:
         return []
@@ -192,7 +194,7 @@ def _normalize_enum_columns(schema: dict[str, Any]) -> list[dict[str, str]]:
         if not isinstance(cfg, dict):
             raise ValueError(f"`enum_columns.{column}` must be a mapping")
 
-        optionset = cfg.get("optionset")
+        optionset = cfg.get("enum", cfg.get("optionset"))
         if not optionset:
             raise ValueError(f"`enum_columns.{column}` requires `optionset`")
 
@@ -234,8 +236,8 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
     platform_config = _load_platform_config(directory)
     global_hashing = normalize_global_hash_config(platform_config)
 
-    for schema_path in sorted(directory.glob("*.y*ml")):
-        if schema_path.name in {"platform.yaml", "platform.yml"}:
+    for schema_path in sorted(directory.glob("**/*.y*ml")):
+        if schema_path.name in {"platform.yaml", "platform.yml", "config.yaml", "config.yml"}:
             continue
         raw = _load_yaml_text(schema_path.read_text(encoding="utf-8"))
         if raw is None:

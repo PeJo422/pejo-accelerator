@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from pejo.adapters.base import BaseAdapter
-import pejo.adapters.dataverse as dataverse_module
-from pejo.adapters.dataverse import DataverseAdapter
+import pejo.adapters.fo as adapter_module
+from pejo.adapters.fo import PEJOAdapter
 from pejo.core.engine import Engine
 from pejo.schemas import load_metadata_from_yaml
 
@@ -108,6 +108,34 @@ tables:
     assert len(merge_calls) == 2
 
 
+def test_engine_run_table_list(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+tables:
+  - table: CustTable
+    domain: Sales
+    bronze: bronze.sales.custtable
+    silver: silver.sales.custtable
+  - table: SalesTable
+    domain: Sales
+    bronze: bronze.sales.salestable
+    silver: silver.sales.salestable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    result = engine.run_table_list(["SalesTable", "CustTable"])
+    assert result.tables == ["SalesTable", "CustTable"]
+    merge_calls = [q for q in engine.spark.sql_calls if "MERGE INTO" in q]
+    assert len(merge_calls) == 2
+
+
 def test_yaml_allows_custom_fields_and_scdtype(tmp_path: Path):
     (tmp_path / "custom.yml").write_text(
         """
@@ -137,14 +165,15 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
-    metadata_table: bronze.crm.globaloptionsetmetadata
-    option_name_column: optionsetname
-    option_value_column: optionvalue
-    option_label_column: label
-    output_column: salesstatus_label
+    enum: SalesStatus
+    mapping:
+      table: bronze.crm.globaloptionsetmetadata
+      enum_column: optionsetname
+      key_column: optionvalue
+      label_column: label
+      output_column: salesstatus_label
 """.strip(),
         encoding="utf-8",
     )
@@ -165,9 +194,9 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
+    enum: SalesStatus
 """.strip(),
         encoding="utf-8",
     )
@@ -179,11 +208,11 @@ enums:
         assert len(enum_mappings) == 1
         return df
 
-    monkeypatch.setattr(dataverse_module, "apply_enum_mappings", _fake_apply)
+    monkeypatch.setattr(adapter_module, "apply_enum_mappings", _fake_apply)
 
     engine = Engine.from_yaml_dir(
         spark=DummySpark(),
-        adapter=DataverseAdapter(),
+        adapter=PEJOAdapter(),
         schema_dir=tmp_path,
     )
 
@@ -246,14 +275,91 @@ scdtype: SCD2
     assert len(insert_calls) == 1
 
 
+def test_engine_dry_run_returns_sql_without_execution(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    dry_run = engine.dry_run("CustTable")
+    assert dry_run.table == "CustTable"
+    assert len(dry_run.sql_statements) == 1
+    assert "MERGE INTO" in dry_run.sql_statements[0]
+    assert not any("MERGE INTO" in q for q in spark.sql_calls)
+
+
+def test_engine_validate_only_domain_without_execution(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+tables:
+  - table: CustTable
+    domain: Sales
+    bronze: bronze.sales.custtable
+    silver: silver.sales.custtable
+  - table: SalesTable
+    domain: Sales
+    bronze: bronze.sales.salestable
+    silver: silver.sales.salestable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    result = engine.validate_only(domain="Sales")
+    assert set(result.tables) == {"CustTable", "SalesTable"}
+    assert not any("MERGE INTO" in q for q in spark.sql_calls)
+
+
+def test_engine_validate_only_requires_single_selector(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    try:
+        engine.validate_only()
+        assert False, "Expected ValueError when no selector is supplied"
+    except ValueError as exc:
+        assert "Specify exactly one" in str(exc)
+
+
 
 def test_loads_hashing_and_enum_columns_from_yaml(tmp_path: Path):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_512
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -267,12 +373,13 @@ silver: silver_salestable
 primary_key: [recid, dataareaid]
 business_key: [salesid, dataareaid]
 hash_columns: [salesid, custaccount, salesstatus, invoiceaccount, modifieddatetime]
-enum_columns:
-  salesstatus:
-    metadata_table: bronze_enum_metadata
-    optionset: salesstatus
-    key_column: option
-    label_column: localizedlabel
+enum:
+  - column: salesstatus
+    enum: salesstatus
+    mapping:
+      table: bronze_enum_metadata
+      key_column: option
+      label_column: localizedlabel
 """.strip(),
         encoding="utf-8",
     )
@@ -284,6 +391,8 @@ enum_columns:
     assert cfg["hash_columns"][0] == "salesid"
     assert cfg["hashing"].algorithm == "sha2_512"
 
+    assert cfg["columns"] == {}
+
     assert len(cfg["enums"]) == 1
     assert cfg["enums"][0]["column"] == "salesstatus"
     assert cfg["enums"][0]["option_value_column"] == "option"
@@ -292,12 +401,11 @@ enum_columns:
 
 
 def test_engine_applies_hashing_strategy(tmp_path: Path, monkeypatch):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -337,6 +445,32 @@ hash_columns: [salesid, custaccount]
     assert calls["value"] == 1
 
 
+def test_load_metadata_recursively_from_metadata_root(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_512
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "sales").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "sales" / "salestable.yml").write_text(
+        """
+table: salestable
+domain: sales
+bronze: bronze_salestable
+silver: silver_salestable
+hash_columns: [salesid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    metadata = load_metadata_from_yaml(tmp_path)
+    assert "salestable" in metadata
+    assert metadata["salestable"]["hashing"].algorithm == "sha2_512"
+
+
 
 def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
     (tmp_path / "platform.yaml").write_text(
@@ -344,7 +478,6 @@ def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -367,3 +500,60 @@ hash_algorithm: sha2_512
     except ValueError as exc:
         assert "Table-level hashing overrides are not allowed" in str(exc)
 
+
+def test_loads_columns_null_handling_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+columns:
+  - accountnum:
+      null_handling: error
+  - currency:
+      null_handling: replace
+      null_replacement: Unknown
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_metadata_from_yaml(tmp_path)["custtable"]
+    assert cfg["columns"]["accountnum"]["null_handling"] == "error"
+    assert cfg["columns"]["currency"]["null_handling"] == "replace"
+    assert cfg["columns"]["currency"]["null_replacement"] == "Unknown"
+
+
+def test_global_null_replacement_is_rejected(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+  null_replacement: ""
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "table.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        load_metadata_from_yaml(tmp_path)
+        assert False, "Expected ValueError for global null_replacement"
+    except ValueError as exc:
+        assert "Global hashing.null_replacement is not supported" in str(exc)
