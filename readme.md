@@ -138,7 +138,7 @@ Detta görs efter enum-berikning och före MERGE/SCD2-SQL.
 
 Om en tabell försöker sätta `hash_algorithm`, `hash_separator` eller `hash_null_replacement` så kastas ett fel (fail fast).
 
-## Exempel enligt Finance-mönstret
+## Exempel enligt Sales-mönstret
 
 ```yaml
 # platform.yaml
@@ -149,9 +149,9 @@ hashing:
 ```
 
 ```yaml
-# fact_salestable.yml
+# salestable.yml
 table: SalesTable
-domain: finance
+domain: Sales
 bronze: bronze_salestable
 silver: silver_salestable
 
@@ -186,11 +186,11 @@ soft_delete:
 
 
 ## Exempelmetadata i repo
-Det finns färdiga YAML-exempel i `metadata/finance/`:
+Det finns färdiga YAML-exempel i `metadata/sales/`:
 - `custtable.yml` (dimension/SCD2 + hashing)
-- `fact_salestable.yml` (fakta/SCD1 + enums + soft delete)
+- `salestable.yml` (fakta/SCD1 + enums + soft delete)
 
-Använd `schema_dir="./metadata/finance"` i `Engine.from_yaml_dir(...)`.
+Använd `schema_dir="./metadata/sales"` i `Engine.from_yaml_dir(...)`.
 
 ## Notebook-användning
 
