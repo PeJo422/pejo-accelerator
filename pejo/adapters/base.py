@@ -1,21 +1,21 @@
-class Engine:
+from __future__ import annotations
 
-    def __init__(self, spark, metadata, adapter):
-        self.spark = spark
-        self.metadata = metadata
-        self.adapter = adapter
+from abc import ABC, abstractmethod
+from typing import Any
 
-    def run(self, table_name):
-        config = self.metadata[table_name]
 
-        bronze = config["bronze"]
-        silver = config["silver"]
+class BaseAdapter(ABC):
+    """Base contract for source-system specific transforms."""
 
-        df = self.spark.table(bronze)
-        df = self.adapter.transform(df)
+    @abstractmethod
+    def transform(self, df):
+        """Apply adapter-specific transformations to the DataFrame."""
+        raise NotImplementedError
 
-        df.createOrReplaceTempView("source_view")
+    def apply_features(self, spark, df, config: dict[str, Any]):
+        """Apply source-specific feature enrichments (default no-op)."""
+        return df
 
-        merge_sql = build_merge_sql(table_name, config)
-
-        self.spark.sql(merge_sql)
+    def default_primary_key(self) -> list[str]:
+        """Fallback primary key used when schema omits `primary_key`."""
+        return []
