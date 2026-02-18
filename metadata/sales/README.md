@@ -3,7 +3,7 @@
 Exempelfiler för PEJO acceleratorn:
 
 - `custtable.yml`: dimensionslik tabell med `SCD2` + hashing.
-- `fact_salestable.yml`: faktatabell med `SCD1`, enum-mappning och soft delete.
+- `salestable.yml`: underlag för faktatabell med `SCD1`, enum-mappning och soft delete.
 
 Kör exempelvis i notebook:
 

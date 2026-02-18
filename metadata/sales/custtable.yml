@@ -1,0 +1,31 @@
+table: custtable
+description: Customer master table from D365 FO
+
+domain: masterdata
+
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+
+primary_key:
+  - recid
+  - dataareaid
+
+business_key:
+  - accountnum
+  - dataareaid
+
+grain:
+  - accountnum
+  - dataareaid
+
+load_strategy: scd2
+
+hash_columns:
+  - currency
+  - blocked
+
+hash_algorithm: sha2_256
+
+soft_delete:
+  enabled: true
+  column: isdeleted
