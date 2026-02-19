@@ -39,7 +39,7 @@ tables:
 | `domain` | `string` | Ja | Används av `engine.run_domain(...)`. |
 | `bronze` | `string` | Ja | Källa, läses via `spark.table(...)`. |
 | `silver` | `string` | Ja | Target för Delta MERGE. |
-| `primary_key` | `string` eller `list[string]` | Nej | Normaliseras till lista och används i MERGE `ON`. Om saknas används adapterns `default_primary_key()`. |
+| `primary_key` | `string` eller `list[string]` | Ja | Normaliseras till lista och används i MERGE `ON`. Om saknas kastas fel. |
 | `load_type` | `string` | Nej | Endast `delta_merge` stöds. Annat värde ger fel. |
 | `scdtype` | `string` | Nej | Styr beteende: `SCD1` (default, Delta MERGE) eller `SCD2` (historisering med `valid_from`, `valid_to`, `is_current`). |
 | `soft_delete.enabled` | `bool` | Nej | Om `true` läggs `WHEN MATCHED AND s.<column> = true THEN DELETE` till MERGE. |
@@ -104,6 +104,30 @@ tables:
 - `mapping.output_column` (valfri, default `<column>_label`).
 
 Engine gör då lookup mot metadata-tabellen och skapar label-kolumnen innan MERGE.
+
+## Miljöstyrd bronze lakehouse
+
+Du kan sätta global `bronze_lakehouse` i `metadata/config.yml`:
+
+```yaml
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+```
+
+Om `bronze` saknar punkt (t.ex. `bronze_salestable`) kvalificeras den automatiskt till
+`<bronze_lakehouse>.<bronze>`.
+
+Du kan även överstyra vid runtime:
+
+```python
+engine = Engine.from_yaml_dir(
+    spark=spark,
+    adapter=PEJOAdapter(),
+    schema_dir="./metadata",
+    lakehouse_id="lh_bronze_test",
+)
+```
 
 ## Business key och hashing (implementerat)
 

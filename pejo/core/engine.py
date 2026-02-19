@@ -35,15 +35,36 @@ class ValidationResult:
 class Engine:
     """Execution engine for table and domain runs."""
 
-    def __init__(self, spark, metadata: dict[str, dict[str, Any]], adapter):
+    def __init__(
+        self,
+        spark,
+        metadata: dict[str, dict[str, Any]],
+        adapter,
+        bronze_lakehouse: str | None = None,
+        lakehouse_id: str | None = None,
+    ):
         self.spark = spark
         self.metadata = metadata
         self.adapter = adapter
+        self.bronze_lakehouse = bronze_lakehouse or lakehouse_id
 
     @classmethod
-    def from_yaml_dir(cls, spark, adapter, schema_dir: str | Path) -> "Engine":
+    def from_yaml_dir(
+        cls,
+        spark,
+        adapter,
+        schema_dir: str | Path,
+        bronze_lakehouse: str | None = None,
+        lakehouse_id: str | None = None,
+    ) -> "Engine":
         metadata = load_metadata_from_yaml(schema_dir)
-        return cls(spark=spark, metadata=metadata, adapter=adapter)
+        return cls(
+            spark=spark,
+            metadata=metadata,
+            adapter=adapter,
+            bronze_lakehouse=bronze_lakehouse,
+            lakehouse_id=lakehouse_id,
+        )
 
     def run(self, table_name: str) -> None:
         logger = RunLogger(self.spark)
@@ -124,14 +145,20 @@ class Engine:
     def _plan_for_table(self, table_name: str) -> tuple[Any, list[str]]:
         config = self.metadata[table_name]
 
-        df = self.spark.table(config["bronze"])
+        bronze_table = self._resolve_bronze_table(config)
+        df = self.spark.table(bronze_table)
         df = self.adapter.transform(df)
         df = self.adapter.apply_features(self.spark, df, config)
         df = apply_hashing_strategy(df, config)
         df.createOrReplaceTempView("source_view")
 
         columns = df.columns
-        keys = config.get("primary_key") or self.adapter.default_primary_key()
+        keys = config.get("primary_key") or []
+        if not keys:
+            raise ValueError(
+                f"Missing required `primary_key` for table '{table_name}'. "
+                "Define `primary_key` in schema."
+            )
         column_aliases = {
             str(column_name): str(settings.get("alias"))
             for column_name, settings in (config.get("columns") or {}).items()
@@ -164,3 +191,14 @@ class Engine:
             return df, [merge_sql]
 
         raise ValueError(f"Unsupported scdtype '{scd_type}'. Use 'SCD1' or 'SCD2'.")
+
+    def _resolve_bronze_table(self, config: dict[str, Any]) -> str:
+        bronze_table = str(config["bronze"])
+        if "." in bronze_table:
+            return bronze_table
+
+        lakehouse = self.bronze_lakehouse or config.get("bronze_lakehouse")
+        if not lakehouse:
+            return bronze_table
+
+        return f"{lakehouse}.{bronze_table}"

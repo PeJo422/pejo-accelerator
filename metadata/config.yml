@@ -1,3 +1,7 @@
+bronze_lakehouse: lh_bronze
+silver_lakehouse: lh_silver
+bronze_schema: dbo
+silver_schema: dbo
 hashing:
   algorithm: sha2_256
   separator: "||"

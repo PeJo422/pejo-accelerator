@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Any
-
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 

@@ -1,0 +1,6 @@
+{
+    "yaml.schemas": {
+        "file:///c%3A/Users/PEJO/.vscode/extensions/atlassian.atlascode-3.8.8/resources/schemas/pipelines-schema.json": "bitbucket-pipelines.yml",
+        "https://www.schemastore.org/yamllint.json": "file:///z%3A/Repos/pejo-accelerator/metadata/config.yml"
+    }
+}

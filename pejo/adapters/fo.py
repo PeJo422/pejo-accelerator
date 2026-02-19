@@ -16,9 +16,6 @@ class PEJOAdapter(BaseAdapter):
 
         return df
 
-    def default_primary_key(self):
-        return ["recid", "dataareaid"]
-
     def apply_features(self, spark, df, config: dict[str, Any]):
         enum_mappings = config.get("enums") or []
         if enum_mappings:

@@ -5,7 +5,7 @@ domain: sales
 
 bronze: bronze_salestable
 silver: silver_salestable
-
+enum_metadata_table: globaloptionsetmetadata
 primary_key:
   - recid
   - dataareaid
@@ -25,18 +25,18 @@ hash_columns:
   - salesstatus
   - invoiceaccount
 
-enum:
-  - column: salesstatus
+columns: 
+  - salesstatus:
     enum: salesstatus
     mapping:
-      table: bronze_enum_metadata
+      table: ${enum_metadata_table}
       key_column: option
       label_column: localizedlabel
 
-  - column: documentstatus
+  - documentstatus:
     enum: documentstatus
     mapping:
-      table: bronze_enum_metadata
+      table: ${enum_metadata_table}
       key_column: option
       label_column: localizedlabel
 

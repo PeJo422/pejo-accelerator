@@ -28,8 +28,10 @@ class DummySpark:
     def __init__(self):
         self.sql_calls = []
         self.saved_rows = []
+        self.table_calls = []
 
-    def table(self, _name: str):
+    def table(self, name: str):
+        self.table_calls.append(name)
         return DummyDataFrame()
 
     def sql(self, query: str):
@@ -560,6 +562,96 @@ columns:
     assert cfg["columns"]["accountnum"]["null_handling"] == "error"
     assert cfg["columns"]["currency"]["null_handling"] == "replace"
     assert cfg["columns"]["currency"]["null_replacement"] == "Unknown"
+
+
+def test_loads_bronze_lakehouse_from_platform_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_metadata_from_yaml(tmp_path)["custtable"]
+    assert cfg["bronze_lakehouse"] == "lh_bronze_dev"
+
+
+def test_engine_qualifies_bronze_table_with_bronze_lakehouse(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.validate_only(table_name="custtable")
+    assert spark.table_calls[0] == "lh_bronze_dev.bronze_finance_custtable"
+
+
+def test_engine_runtime_lakehouse_id_overrides_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+        lakehouse_id="lh_bronze_test",
+    )
+
+    engine.validate_only(table_name="custtable")
+    assert spark.table_calls[0] == "lh_bronze_test.bronze_finance_custtable"
 
 
 def test_global_null_replacement_is_rejected(tmp_path: Path):
