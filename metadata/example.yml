@@ -1,0 +1,71 @@
+﻿# Full metadata example with supported attributes.
+# This file is documentation/reference and can be used as a template.
+
+tables:
+  - table: custtable
+    description: Customer master table from D365 FO
+    domain: masterdata
+
+    # Preferred modern keys (legacy bronze/silver still supported)
+    bronze_tablename: custtable
+    silver_tablename: custtable
+
+    primary_key:
+      - recid
+      - dataareaid
+
+    # Optional, defaults to delta_merge
+    load_type: delta_merge
+
+    # SCD1 or SCD2
+    scdtype: SCD2
+
+    # Used by hashing strategy
+    business_key:
+      - accountnum
+      - dataareaid
+
+    hash_columns:
+      - accountnum
+      - currency
+      - blocked
+      - modifieddatetime
+
+    # Optional incremental loading from Bronze -> Silver
+    incremental:
+      enabled: true
+      column: loaded_at
+
+    # SCD1 soft delete behavior
+    soft_delete:
+      enabled: true
+      column: isdeleted
+
+    # Column-level rules and aliases
+    columns:
+      - accountnum:
+          null_handling: error
+      - currency:
+          null_handling: replace
+          null_replacement: "Unknown"
+      - modifieddatetime:
+          alias: modified_at
+
+    # Modern enum mappings
+    enum:
+      - column: salesstatus
+        enum: salesstatus
+        mapping:
+          table: globaloptionsetmetadata
+          enum_column: optionsetname
+          key_column: optionvalue
+          label_column: label
+          output_column: salesstatus_label
+
+
+    # Any extra custom metadata is preserved by the loader
+    grain:
+      - accountnum
+      - dataareaid
+    owner: data-platform
+    pii_classification: internal
