@@ -5,6 +5,7 @@ This file describes how to validate and inspect metadata used by the PEJO engine
 ## Files
 - Platform config: `metadata/config.yml`
 - Table metadata: `metadata/**/*.yml`
+- Full attribute example: `metadata/example.yml`
 
 ## Required per table
 - `table`
@@ -12,12 +13,26 @@ This file describes how to validate and inspect metadata used by the PEJO engine
 - `bronze_tablename` (or legacy `bronze`)
 - `silver_tablename` (or legacy `silver`)
 
+## Supported attributes
+- `description`
+- `primary_key`
+- `load_type`
+- `scdtype`
+- `soft_delete`
+- `business_key`
+- `hash_columns`
+- `incremental`
+- `columns`
+- `enum`, `enums`, `enum_columns`
+- extra custom fields (preserved)
+
 ## Recommended checks before running
 1. `primary_key` is present and correct.
 2. `scdtype` is `SCD1` or `SCD2`.
 3. `business_key`/`hash_columns` are aligned with model requirements.
 4. Enum mappings point to valid metadata table/columns.
-5. `config.yml` has expected lakehouse/schema values per environment.
+5. `incremental.column` exists in Bronze if incremental is enabled.
+6. `config.yml` has expected lakehouse/schema values per environment.
 
 ## Supported validation/run commands
 
@@ -55,16 +70,19 @@ engine.run_table_list(["custtable", "salestable"])
 # List metadata files
 Get-ChildItem metadata -Recurse -Filter *.yml
 
-# Find all tablename keys
+# Find modern table name keys
 rg -n "bronze_tablename|silver_tablename" metadata
 
 # Find legacy keys still in use
 rg -n "^bronze:|^silver:" metadata
 
+# Find incremental tables
+rg -n "incremental:|enabled:\s*true|column:" metadata
+
 # Find SCD2 tables
 rg -n "scdtype:\s*scd2|scdtype:\s*SCD2" metadata
 
-# Find tables without primary_key
+# Find tables with missing primary_key declaration
 rg -n "^primary_key:" metadata
 ```
 
@@ -79,3 +97,4 @@ This allows same tablename in Bronze and Silver as long as lakehouse/schema diff
 - Missing source table => run is logged as `SKIPPED`.
 - Missing target table => auto-bootstrap from source DataFrame.
 - For `SCD2`, required technical columns are auto-added if missing.
+- For incremental, watermark is always derived from Silver (not run logs).

@@ -9,6 +9,7 @@ Metadata-driven Spark/Delta framework for loading from Bronze to Silver.
 - SCD2 via single Delta `MERGE` (matched update + not matched insert).
 - Enum enrichment via metadata mappings.
 - Hashing (`business_key_hash`, `row_hash`) from global hashing config.
+- Incremental filtering using watermark from Silver.
 - Run logging to `pejo_run_log`.
 - Source-not-found handling: run is logged as `SKIPPED`.
 
@@ -49,37 +50,21 @@ Required keys per table:
 - `bronze_tablename` (or legacy `bronze`)
 - `silver_tablename` (or legacy `silver`)
 
-Common keys:
-- `primary_key`: string or list
-- `scdtype`: `SCD1` or `SCD2`
-- `business_key`: string or list
-- `hash_columns`: string or list
+Supported attributes:
+- `description`
+- `primary_key`
+- `load_type` (`delta_merge`)
+- `scdtype` (`SCD1`/`SCD2`)
 - `soft_delete.enabled`, `soft_delete.column`
+- `business_key`
+- `hash_columns`
+- `incremental.enabled`, `incremental.column`
+- `columns` (null handling, alias)
 - `enum` / `enums` / `enum_columns`
-- `columns` (null handling + alias)
+- custom extra fields (preserved in metadata)
 
-Example:
-
-```yaml
-table: custtable
-domain: masterdata
-bronze_tablename: custtable
-silver_tablename: custtable
-
-primary_key:
-  - recid
-  - dataareaid
-
-scdtype: scd2
-
-business_key:
-  - accountnum
-  - dataareaid
-
-hash_columns:
-  - currency
-  - blocked
-```
+Complete reference example:
+- `metadata/example.yml`
 
 ## Runtime Behavior
 
@@ -90,6 +75,13 @@ If source table does not exist:
   - `status = SKIPPED`
   - `error_message = Source table not found`
   - `rows_source = null`
+
+### Incremental loading
+If `incremental.enabled: true`:
+- watermark is read from Silver: `MAX(incremental.column)`
+- for `SCD2`, watermark is calculated from `is_current = true`
+- if watermark is `null` or Silver is missing => full load
+- filter is applied before transform/features/hashing
 
 ### Target bootstrap
 If target table does not exist:
@@ -142,4 +134,4 @@ Columns:
 - `executed_sql`
 
 ## Metadata Validation and Inspection
-See `metadata/README.md` for a focused guide on checking metadata and running supported validation commands.
+See `metadata/README.md` for metadata checks and command examples.
