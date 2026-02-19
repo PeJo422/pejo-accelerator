@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from pyspark.sql import functions as F
 
 from pejo.core.logging import RunLogger
 from pejo.core.hashing import apply_hashing_strategy
@@ -77,9 +78,17 @@ class Engine:
         logger.start(table_name)
 
         try:
-            df, sql_statements = self._plan_for_table(table_name)
+            df, sql_statements, plan_status = self._plan_for_table(table_name)
+            if plan_status == "SOURCE_NOT_FOUND":
+                logger.end(
+                    status="SKIPPED",
+                    error_message="Source table not found",
+                    rows_source=None,
+                )
+                return
+
             config = self.metadata[table_name]
-            self._ensure_target_table(config["silver"])
+            self._ensure_target_table(config["silver"], df)
 
             if str(config.get("scdtype", "SCD1")).upper() == "SCD2":
                 self._ensure_scd2_target_columns(config["silver"])
@@ -87,9 +96,17 @@ class Engine:
             for statement in sql_statements:
                 self.spark.sql(statement)
 
-            logger.end(status="SUCCESS", rows_source=df.count())
+            logger.end(
+                    status="SUCCESS", 
+                    rows_source=df.count(),
+                    sql_text=";\n".join(sql_statements)
+                    )
         except Exception as exc:
-            logger.end(status="FAILED", error_message=str(exc))
+            logger.end(
+                    status="FAILED", 
+                    error_message=str(exc),
+                    sql_text=";\n".join(sql_statements)
+                    )
             raise
 
     def run_domain(self, domain: str) -> DomainRunResult:
@@ -107,7 +124,9 @@ class Engine:
         return TableListRunResult(tables=tables)
 
     def dry_run(self, table_name: str) -> DryRunResult:
-        _df, sql_statements = self._plan_for_table(table_name)
+        _df, sql_statements, plan_status = self._plan_for_table(table_name)
+        if plan_status == "SOURCE_NOT_FOUND":
+            raise ValueError(f"Source table not found for '{table_name}'")
         return DryRunResult(table=table_name, sql_statements=sql_statements)
 
     def validate_only(
@@ -118,7 +137,9 @@ class Engine:
     ) -> ValidationResult:
         tables = self._resolve_tables(table_name=table_name, domain=domain, table_names=table_names)
         for name in tables:
-            self._plan_for_table(name)
+            _df, _sql, plan_status = self._plan_for_table(name)
+            if plan_status == "SOURCE_NOT_FOUND":
+                raise ValueError(f"Source table not found for '{name}'")
         return ValidationResult(tables=tables)
 
     def _resolve_tables(
@@ -153,10 +174,13 @@ class Engine:
             raise ValueError(f"No tables found for domain '{domain}'")
         return tables
 
-    def _plan_for_table(self, table_name: str) -> tuple[Any, list[str]]:
+    def _plan_for_table(self, table_name: str) -> tuple[Any | None, list[str] | None, str]:
         config = self.metadata[table_name]
 
         bronze_table = self._resolve_bronze_table(config)
+        if not self.spark.catalog.tableExists(bronze_table):
+            return None, None, "SOURCE_NOT_FOUND"
+
         df = self.spark.table(bronze_table)
         df = self.adapter.transform(df)
         df = self.adapter.apply_features(self.spark, df, config)
@@ -189,7 +213,7 @@ class Engine:
                 columns=columns,
                 column_aliases=column_aliases,
             )
-            return df, [merge_sql]
+            return df, [merge_sql], "OK"
         if scd_type == "SCD1":
             merge_sql = build_delta_merge_sql(
                 target=config["silver"],
@@ -199,7 +223,7 @@ class Engine:
                 soft_delete=config.get("soft_delete"),
                 column_aliases=column_aliases,
             )
-            return df, [merge_sql]
+            return df, [merge_sql], "OK"
 
         raise ValueError(f"Unsupported scdtype '{scd_type}'. Use 'SCD1' or 'SCD2'.")
 
@@ -236,8 +260,23 @@ class Engine:
         add_columns_sql = ", ".join([f"{column_name} {data_type}" for column_name, data_type in missing])
         self.spark.sql(f"ALTER TABLE {target_table} ADD COLUMNS ({add_columns_sql})")
 
-    def _ensure_target_table(self, target_table: str) -> None:
-        self.spark.sql(
-            f"CREATE TABLE IF NOT EXISTS {target_table} USING DELTA "
-            "AS SELECT * FROM source_view WHERE 1 = 0"
-        )
+    def _ensure_target_table(self, target_table: str, df) -> None:
+        if self.spark.catalog.tableExists(target_table):
+            return
+
+        bootstrap_df = self._build_target_bootstrap_df(df)
+        bootstrap_df.write.format("delta").mode("overwrite").saveAsTable(target_table)
+
+    def _build_target_bootstrap_df(self, df):
+        result = df
+        if "business_key_hash" not in result.columns:
+            result = result.withColumn("business_key_hash", F.lit(None).cast("string"))
+        if "row_hash" not in result.columns:
+            result = result.withColumn("row_hash", F.lit(None).cast("string"))
+        if "valid_from" not in result.columns:
+            result = result.withColumn("valid_from", F.current_timestamp())
+        if "valid_to" not in result.columns:
+            result = result.withColumn("valid_to", F.lit(None).cast("timestamp"))
+        if "is_current" not in result.columns:
+            result = result.withColumn("is_current", F.lit(True).cast("boolean"))
+        return result

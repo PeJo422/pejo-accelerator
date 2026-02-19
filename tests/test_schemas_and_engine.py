@@ -18,12 +18,37 @@ class DummyDataFrame:
         def __init__(self, columns: list[str]):
             self.fields = [DummyDataFrame._Field(column) for column in columns]
 
-    def __init__(self, columns: list[str] | None = None):
+    class _Writer:
+        def __init__(self, df, spark):
+            self.df = df
+            self.spark = spark
+
+        def format(self, _fmt: str):
+            return self
+
+        def mode(self, _mode: str):
+            return self
+
+        def saveAsTable(self, table_name: str):
+            self.spark.created_tables.append(table_name)
+            self.spark.table_exists[table_name] = True
+            self.spark.table_schemas[table_name] = list(self.df.columns)
+            return None
+
+    def __init__(self, columns: list[str] | None = None, spark=None):
         self.columns = columns or ["recid", "dataareaid", "name"]
         self.schema = DummyDataFrame._Schema(self.columns)
+        self._spark = spark
 
     def withColumnRenamed(self, old: str, new: str):
         self.columns = [new if c == old else c for c in self.columns]
+        self.schema = DummyDataFrame._Schema(self.columns)
+        return self
+
+    def withColumn(self, name: str, _expr):
+        if name not in self.columns:
+            self.columns.append(name)
+        self.schema = DummyDataFrame._Schema(self.columns)
         return self
 
     def createOrReplaceTempView(self, _name: str):
@@ -32,17 +57,35 @@ class DummyDataFrame:
     def count(self):
         return 3
 
+    @property
+    def write(self):
+        return DummyDataFrame._Writer(self, self._spark)
+
 
 class DummySpark:
-    def __init__(self, table_schemas: dict[str, list[str]] | None = None):
+    class _Catalog:
+        def __init__(self, spark):
+            self.spark = spark
+
+        def tableExists(self, table_name: str) -> bool:
+            return self.spark.table_exists.get(table_name, True)
+
+    def __init__(
+        self,
+        table_schemas: dict[str, list[str]] | None = None,
+        table_exists: dict[str, bool] | None = None,
+    ):
         self.sql_calls = []
         self.saved_rows = []
         self.table_calls = []
         self.table_schemas = table_schemas or {}
+        self.table_exists = table_exists or {}
+        self.created_tables = []
+        self.catalog = DummySpark._Catalog(self)
 
     def table(self, name: str):
         self.table_calls.append(name)
-        return DummyDataFrame(columns=self.table_schemas.get(name))
+        return DummyDataFrame(columns=self.table_schemas.get(name), spark=self)
 
     def sql(self, query: str):
         self.sql_calls.append(query)
@@ -257,6 +300,34 @@ primary_key: recid
     assert any("CREATE TABLE IF NOT EXISTS pejo_run_log" in q for q in spark.sql_calls)
 
 
+def test_engine_skips_when_source_table_missing(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(table_exists={"bronze.sales.custtable": False})
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("CustTable")
+
+    assert len(spark.saved_rows) == 1
+    _, _, _, _, rows_source, status, error_message = spark.saved_rows[0]
+    assert status == "SKIPPED"
+    assert error_message == "Source table not found"
+    assert rows_source is None
+
+
 
 def test_engine_runs_scd2_single_merge(tmp_path: Path):
     (tmp_path / "dim.yml").write_text(
@@ -403,7 +474,7 @@ scdtype: SCD1
         encoding="utf-8",
     )
 
-    spark = DummySpark()
+    spark = DummySpark(table_exists={"silver.sales.custtable": False})
     engine = Engine.from_yaml_dir(
         spark=spark,
         adapter=DummyAdapter(),
@@ -412,8 +483,7 @@ scdtype: SCD1
 
     engine.run("CustTable")
 
-    create_calls = [q for q in spark.sql_calls if "CREATE TABLE IF NOT EXISTS silver.sales.custtable USING DELTA" in q]
-    assert len(create_calls) == 1
+    assert "silver.sales.custtable" in spark.created_tables
 def test_engine_dry_run_returns_sql_without_execution(tmp_path: Path):
     (tmp_path / "sales.yml").write_text(
         """

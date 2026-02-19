@@ -18,7 +18,8 @@ class RunLogger:
                 end_time TIMESTAMP,
                 rows_source BIGINT,
                 status STRING,
-                error_message STRING
+                error_message STRING,
+                executed_sql STRING
             )
             USING DELTA
             """.strip()
@@ -31,8 +32,14 @@ class RunLogger:
         self.start_time = datetime.utcnow()
         return self.run_id
 
-    def end(self, status="SUCCESS", error_message=None, rows_source=None):
-        end_time = datetime.utcnow()
+    def end(
+            self, 
+            status="SUCCESS", 
+            error_message=None, 
+            rows_source=None,
+            executed_sql=None,
+            ):
+        end_time = datetime.now()
 
         log_df = self.spark.createDataFrame(
             [
@@ -43,7 +50,8 @@ class RunLogger:
                     end_time,
                     rows_source,
                     status,
-                    error_message
+                    error_message,
+                    executed_sql
                 )
             ],
             [
@@ -53,7 +61,8 @@ class RunLogger:
                 "end_time",
                 "rows_source",
                 "status",
-                "error_message"
+                "error_message",
+                "executed_sql"
             ]
         )
 
