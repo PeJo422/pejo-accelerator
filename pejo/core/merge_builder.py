@@ -46,30 +46,17 @@ def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
 
     scd2_technical_columns = {"valid_from", "valid_to", "is_current"}
     payload_columns = [c for c in columns if c not in scd2_technical_columns]
-    tracked_columns = [c for c in payload_columns if c not in keys]
-    if not tracked_columns:
-        raise ValueError("SCD2 requires at least one non-key column to detect changes")
+    if "row_hash" not in columns:
+        raise ValueError("SCD2 requires 'row_hash' column for hash-based change detection")
 
     key_join_tu = " AND ".join([f"t.{_target_column(k, column_aliases)} = u.{k}" for k in keys])
     key_join_si = " AND ".join([f"t2.{_target_column(k, column_aliases)} = s.{k}" for k in keys])
     merge_on = " AND ".join([f"t.{_target_column(k, column_aliases)} = u.__merge_key_{k}" for k in keys])
 
-    def _cmp_tu(col: str) -> str:
-        target_col = _target_column(col, column_aliases)
-        return (
-            f"COALESCE(CAST(t.{target_col} AS STRING), '__NULL__') "
-            f"<> COALESCE(CAST(u.{col} AS STRING), '__NULL__')"
-        )
+    
 
-    def _cmp_t2s(col: str) -> str:
-        target_col = _target_column(col, column_aliases)
-        return (
-            f"COALESCE(CAST(t2.{target_col} AS STRING), '__NULL__') "
-            f"<> COALESCE(CAST(s.{col} AS STRING), '__NULL__')"
-        )
-
-    change_condition_tu = " OR ".join([_cmp_tu(c) for c in tracked_columns])
-    change_condition_t2s = " OR ".join([_cmp_t2s(c) for c in tracked_columns])
+    change_condition_tu = "NOT (t.row_hash <=> u.row_hash)"
+    change_condition_t2s = "NOT (t2.row_hash <=> s.row_hash)"
 
     base_columns = ", ".join([_target_column(c, column_aliases) for c in payload_columns])
     base_values = ", ".join([f"u.{c}" for c in payload_columns])
