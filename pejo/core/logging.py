@@ -1,6 +1,7 @@
 import uuid
 from datetime import datetime
 
+from pyspark.sql.types import LongType, StringType, StructField, StructType, TimestampType
 
 class RunLogger:
 
@@ -39,7 +40,20 @@ class RunLogger:
             rows_source=None,
             executed_sql=None,
             ):
-        end_time = datetime.now()
+        end_time = datetime.utcnow()
+
+        schema = StructType(
+            [
+                StructField("run_id", StringType(), False),
+                StructField("table_name", StringType(), False),
+                StructField("start_time", TimestampType(), False),
+                StructField("end_time", TimestampType(), False),
+                StructField("rows_source", LongType(), True),
+                StructField("status", StringType(), False),
+                StructField("error_message", StringType(), True),
+                StructField("executed_sql", StringType(), True),
+            ]
+        )
 
         log_df = self.spark.createDataFrame(
             [
@@ -54,16 +68,7 @@ class RunLogger:
                     executed_sql
                 )
             ],
-            [
-                "run_id",
-                "table_name",
-                "start_time",
-                "end_time",
-                "rows_source",
-                "status",
-                "error_message",
-                "executed_sql"
-            ]
+            schema=schema,
         )
 
         log_df.write.mode("append").saveAsTable(self.log_table)
