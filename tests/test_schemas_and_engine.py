@@ -10,8 +10,17 @@ from pejo.schemas import load_metadata_from_yaml
 
 
 class DummyDataFrame:
-    def __init__(self):
-        self.columns = ["recid", "dataareaid", "name"]
+    class _Field:
+        def __init__(self, name: str):
+            self.name = name
+
+    class _Schema:
+        def __init__(self, columns: list[str]):
+            self.fields = [DummyDataFrame._Field(column) for column in columns]
+
+    def __init__(self, columns: list[str] | None = None):
+        self.columns = columns or ["recid", "dataareaid", "name"]
+        self.schema = DummyDataFrame._Schema(self.columns)
 
     def withColumnRenamed(self, old: str, new: str):
         self.columns = [new if c == old else c for c in self.columns]
@@ -25,14 +34,15 @@ class DummyDataFrame:
 
 
 class DummySpark:
-    def __init__(self):
+    def __init__(self, table_schemas: dict[str, list[str]] | None = None):
         self.sql_calls = []
         self.saved_rows = []
         self.table_calls = []
+        self.table_schemas = table_schemas or {}
 
     def table(self, name: str):
         self.table_calls.append(name)
-        return DummyDataFrame()
+        return DummyDataFrame(columns=self.table_schemas.get(name))
 
     def sql(self, query: str):
         self.sql_calls.append(query)
@@ -248,7 +258,7 @@ primary_key: recid
 
 
 
-def test_engine_runs_scd2_update_and_insert(tmp_path: Path):
+def test_engine_runs_scd2_single_merge(tmp_path: Path):
     (tmp_path / "dim.yml").write_text(
         """
 table: DimCustomer
@@ -270,11 +280,82 @@ scdtype: SCD2
 
     engine.run("DimCustomer")
 
-    update_calls = [q for q in spark.sql_calls if "UPDATE silver.sales.dimcustomer" in q]
-    insert_calls = [q for q in spark.sql_calls if "INSERT INTO silver.sales.dimcustomer" in q]
+    merge_calls = [q for q in spark.sql_calls if "MERGE INTO silver.sales.dimcustomer" in q]
+    assert len(merge_calls) == 1
+    assert "WHEN MATCHED" in merge_calls[0]
+    assert "WHEN NOT MATCHED" in merge_calls[0]
 
-    assert len(update_calls) == 1
-    assert len(insert_calls) == 1
+
+def test_engine_adds_missing_required_scd2_columns(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(
+        table_schemas={
+            "silver.sales.dimcustomer": ["recid", "dataareaid", "name"],
+        }
+    )
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    alter_calls = [q for q in spark.sql_calls if "ALTER TABLE silver.sales.dimcustomer ADD COLUMNS" in q]
+    assert len(alter_calls) == 1
+    assert "valid_from TIMESTAMP" in alter_calls[0]
+    assert "valid_to TIMESTAMP" in alter_calls[0]
+    assert "is_current BOOLEAN" in alter_calls[0]
+    assert "row_hash STRING" in alter_calls[0]
+
+
+def test_engine_does_not_add_required_scd2_columns_when_present(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(
+        table_schemas={
+            "silver.sales.dimcustomer": [
+                "recid",
+                "dataareaid",
+                "name",
+                "valid_from",
+                "valid_to",
+                "is_current",
+                "row_hash",
+            ],
+        }
+    )
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    alter_calls = [q for q in spark.sql_calls if "ALTER TABLE silver.sales.dimcustomer ADD COLUMNS" in q]
+    assert len(alter_calls) == 0
 
 
 
@@ -304,9 +385,35 @@ columns:
 
     engine.run("DimCustomer")
 
-    insert_call = next(q for q in spark.sql_calls if "INSERT INTO silver.sales.dimcustomer" in q)
-    assert "INSERT INTO silver.sales.dimcustomer (recid, dataareaid, CustomerName, valid_from, valid_to, is_current)" in insert_call
-    assert "SELECT s.recid, s.dataareaid, s.name AS CustomerName, current_timestamp()" in insert_call
+    merge_call = next(q for q in spark.sql_calls if "MERGE INTO silver.sales.dimcustomer" in q)
+    assert "INSERT (recid, dataareaid, CustomerName, valid_from, valid_to, is_current)" in merge_call
+    assert "VALUES (u.recid, u.dataareaid, u.name, current_timestamp()" in merge_call
+
+
+def test_engine_creates_target_table_if_missing_for_scd1(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+scdtype: SCD1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("CustTable")
+
+    create_calls = [q for q in spark.sql_calls if "CREATE TABLE IF NOT EXISTS silver.sales.custtable USING DELTA" in q]
+    assert len(create_calls) == 1
 def test_engine_dry_run_returns_sql_without_execution(tmp_path: Path):
     (tmp_path / "sales.yml").write_text(
         """
