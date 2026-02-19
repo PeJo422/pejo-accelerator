@@ -39,16 +39,17 @@ tables:
 | `domain` | `string` | Ja | Används av `engine.run_domain(...)`. |
 | `bronze` | `string` | Ja | Källa, läses via `spark.table(...)`. |
 | `silver` | `string` | Ja | Target för Delta MERGE. |
-| `primary_key` | `string` eller `list[string]` | Nej | Normaliseras till lista och används i MERGE `ON`. Om saknas används adapterns `default_primary_key()`. |
+| `primary_key` | `string` eller `list[string]` | Ja | Normaliseras till lista och används i MERGE `ON`. Om saknas kastas fel. |
 | `load_type` | `string` | Nej | Endast `delta_merge` stöds. Annat värde ger fel. |
 | `scdtype` | `string` | Nej | Styr beteende: `SCD1` (default, Delta MERGE) eller `SCD2` (historisering med `valid_from`, `valid_to`, `is_current`). |
 | `soft_delete.enabled` | `bool` | Nej | Om `true` läggs `WHEN MATCHED AND s.<column> = true THEN DELETE` till MERGE. |
 | `soft_delete.column` | `string` | Nej | Kolumn för soft delete-villkoret. |
-| `enums` | `list[mapping]` | Nej | Dynamics enum-lookup (GlobalOptionSetMetadata) före MERGE. |
-| `enum_columns` | `mapping` | Nej | Kortform för enum-mappningar per kolumn (normaliseras till `enums`). |
+| `enum` | `list[mapping]` eller `mapping` | Nej | Enum-lookup före MERGE. Stödjer flera mappingar. |
+| `enums`/`enum_columns` | legacy | Nej | Bakåtkompatibla alias till `enum`. |
 | `business_key` | `string` eller `list[string]` | Nej | Kolumner för business key-hash (`business_key_hash`). |
 | `hash_columns` | `string` eller `list[string]` | Nej | Kolumner för rad-hash (`row_hash`). |
-| `hash_algorithm` | `string` | Nej | **Ej tillåten per tabell**. Sätts globalt i `platform.yaml` under `hashing.algorithm`. |
+| `hash_algorithm` | `string` | Nej | **Ej tillåten per tabell**. Sätts globalt i `config.yml` (eller `platform.yaml`) under `hashing.algorithm`. |
+| `columns` | `list[mapping]` | Nej | Kolumnregler, t.ex. `null_handling: error|warning|replace` och `null_replacement` för `replace`. |
 
 
 ## SCD-beteende (implementerat)
@@ -69,10 +70,10 @@ Target-tabellen behöver ha kolumnerna:
 - `valid_to` (timestamp, nullable)
 - `is_current` (boolean)
 
-## Dynamics enums (GlobalOptionSetMetadata)
-Enum-logiken ligger i `pejo/adapters/dataverse.py` eftersom detta är Dynamics-specifik funktionalitet (inte generell core-logik).
+## Enums via YAML
+Enum-logiken appliceras av den globala adaptern `PEJOAdapter` och styrs helt via YAML.
 
-För att mappa enum-koder till labels från Dynamics, lägg till `enums` i tabellens YAML:
+För att mappa enum-koder till labels, lägg till `enum` i tabellens YAML:
 
 ```yaml
 tables:
@@ -82,37 +83,61 @@ tables:
     silver: silver.sales.salesorder
     primary_key: [recid]
     load_type: delta_merge
-    enums:
+    enum:
       - column: salesstatus
-        optionset: SalesStatus
-        metadata_table: bronze.crm.globaloptionsetmetadata
-        option_name_column: optionsetname
-        option_value_column: optionvalue
-        option_label_column: label
-        output_column: salesstatus_label
+        enum: SalesStatus
+        mapping:
+          table: bronze.crm.globaloptionsetmetadata
+          enum_column: optionsetname
+          key_column: optionvalue
+          label_column: label
+          output_column: salesstatus_label
 ```
 
-### `enums`-fält
+### `enum`-fält
 - `column` (obligatorisk): kolumn i källdatan med enumvärde.
-- `optionset` (obligatorisk): Dynamics option set-namn.
-- `metadata_table` (valfri, default `globaloptionsetmetadata`).
-- `option_name_column` (valfri, default `optionsetname`).
-- `option_value_column` (valfri, default `optionvalue`).
-- `option_label_column` (valfri, default `label`).
-- `output_column` (valfri, default `<column>_label`).
+- `enum` (obligatorisk): enum/optionset-namn.
+- `mapping.table` (valfri, default `globaloptionsetmetadata`).
+- `mapping.enum_column` (valfri, default `optionsetname`).
+- `mapping.key_column` (valfri, default `optionvalue`).
+- `mapping.label_column` (valfri, default `label`).
+- `mapping.output_column` (valfri, default `<column>_label`).
 
 Engine gör då lookup mot metadata-tabellen och skapar label-kolumnen innan MERGE.
 
-## Business key och hashing (implementerat)
+## Miljöstyrd bronze lakehouse
 
-Hash-strategin styrs nu globalt i `platform.yaml` (inte per tabell):
+Du kan sätta global `bronze_lakehouse` i `metadata/config.yml`:
 
 ```yaml
-# platform.yaml
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+```
+
+Om `bronze` saknar punkt (t.ex. `bronze_salestable`) kvalificeras den automatiskt till
+`<bronze_lakehouse>.<bronze>`.
+
+Du kan även överstyra vid runtime:
+
+```python
+engine = Engine.from_yaml_dir(
+    spark=spark,
+    adapter=PEJOAdapter(),
+    schema_dir="./metadata",
+    lakehouse_id="lh_bronze_test",
+)
+```
+
+## Business key och hashing (implementerat)
+
+Hash-strategin styrs nu globalt i `config.yml` (inte per tabell):
+
+```yaml
+# config.yml
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 ```
 
 Per tabell anger ni endast vilka kolumner som ska hash:as:
@@ -138,20 +163,21 @@ Detta görs efter enum-berikning och före MERGE/SCD2-SQL.
 
 Om en tabell försöker sätta `hash_algorithm`, `hash_separator` eller `hash_null_replacement` så kastas ett fel (fail fast).
 
-## Exempel enligt Finance-mönstret
+`null_replacement` stöds inte globalt utan konfigureras per kolumn i respektive tabell-YAML under `columns`.
+
+## Exempel enligt metadata-mönstret
 
 ```yaml
-# platform.yaml
+# config.yml
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 ```
 
 ```yaml
-# fact_salestable.yml
+# salestable.yml
 table: SalesTable
-domain: finance
+domain: Sales
 bronze: bronze_salestable
 silver: silver_salestable
 
@@ -170,27 +196,33 @@ hash_columns:
   - invoiceaccount
   - modifieddatetime
 
-enum_columns:
-  salesstatus:
-    metadata_table: bronze_enum_metadata
-    optionset: salesstatus
-    key_column: option
-    label_column: localizedlabel
+columns:
+  - custaccount:
+      null_handling: error
+  - salesstatus:
+      null_handling: replace
+      null_replacement: "Unknown"
+
+enum:
+  - column: salesstatus
+    enum: salesstatus
+    mapping:
+      table: bronze_enum_metadata
+      key_column: option
+      label_column: localizedlabel
 
 soft_delete:
   enabled: true
   column: isdeleted
 ```
 
-`enum_columns` är en kortform som normaliseras till vanliga `enums` internt.
+Flera enum-mappningar stöds via en lista i `enum`.
 
 
 ## Exempelmetadata i repo
-Det finns färdiga YAML-exempel i `metadata/finance/`:
-- `custtable.yml` (dimension/SCD2 + hashing)
-- `fact_salestable.yml` (fakta/SCD1 + enums + soft delete)
+Det finns färdiga YAML-exempel i `metadata/sales/` och global config i `metadata/config.yml`.
 
-Använd `schema_dir="./metadata/finance"` i `Engine.from_yaml_dir(...)`.
+Använd `schema_dir="./metadata"` i `Engine.from_yaml_dir(...)`.
 
 ## Notebook-användning
 
@@ -198,13 +230,27 @@ Använd `schema_dir="./metadata/finance"` i `Engine.from_yaml_dir(...)`.
 from pejo import Engine, PEJOAdapter
 
 adapter = PEJOAdapter()
-engine = Engine.from_yaml_dir(spark=spark, adapter=adapter, schema_dir="./schemas")
+engine = Engine.from_yaml_dir(spark=spark, adapter=adapter, schema_dir="./metadata")
 
 # Kör en tabell
-engine.run("CustTable")
+engine.run("custtable")
 
 # Kör en hel domän
-engine.run_domain("Sales")
+engine.run_domain("sales")
+
+# Kör en lista av tabeller
+engine.run_table_list(["custtable", "salestable"])
+
+# Validera metadata/SQL-plan utan att skriva till target
+engine.validate_only(table_name="custtable")
+engine.validate_only(domain="sales")
+engine.validate_only(table_names=["custtable", "salestable"])
+
+# Dry-run för en tabell (returnerar SQL som skulle köras)
+dry = engine.dry_run("custtable")
+for sql in dry.sql_statements:
+    print(sql)
+
 ```
 
 ## Körningsloggar

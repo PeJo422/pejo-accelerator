@@ -3,18 +3,52 @@ from __future__ import annotations
 from pathlib import Path
 
 from pejo.adapters.base import BaseAdapter
-import pejo.adapters.dataverse as dataverse_module
-from pejo.adapters.dataverse import DataverseAdapter
+import pejo.adapters.fo as adapter_module
+from pejo.adapters.fo import PEJOAdapter
 from pejo.core.engine import Engine
 from pejo.schemas import load_metadata_from_yaml
 
 
 class DummyDataFrame:
-    def __init__(self):
-        self.columns = ["recid", "dataareaid", "name"]
+    class _Field:
+        def __init__(self, name: str):
+            self.name = name
+
+    class _Schema:
+        def __init__(self, columns: list[str]):
+            self.fields = [DummyDataFrame._Field(column) for column in columns]
+
+    class _Writer:
+        def __init__(self, df, spark):
+            self.df = df
+            self.spark = spark
+
+        def format(self, _fmt: str):
+            return self
+
+        def mode(self, _mode: str):
+            return self
+
+        def saveAsTable(self, table_name: str):
+            self.spark.created_tables.append(table_name)
+            self.spark.table_exists[table_name] = True
+            self.spark.table_schemas[table_name] = list(self.df.columns)
+            return None
+
+    def __init__(self, columns: list[str] | None = None, spark=None):
+        self.columns = columns or ["recid", "dataareaid", "name"]
+        self.schema = DummyDataFrame._Schema(self.columns)
+        self._spark = spark
 
     def withColumnRenamed(self, old: str, new: str):
         self.columns = [new if c == old else c for c in self.columns]
+        self.schema = DummyDataFrame._Schema(self.columns)
+        return self
+
+    def withColumn(self, name: str, _expr):
+        if name not in self.columns:
+            self.columns.append(name)
+        self.schema = DummyDataFrame._Schema(self.columns)
         return self
 
     def createOrReplaceTempView(self, _name: str):
@@ -23,14 +57,35 @@ class DummyDataFrame:
     def count(self):
         return 3
 
+    @property
+    def write(self):
+        return DummyDataFrame._Writer(self, self._spark)
+
 
 class DummySpark:
-    def __init__(self):
+    class _Catalog:
+        def __init__(self, spark):
+            self.spark = spark
+
+        def tableExists(self, table_name: str) -> bool:
+            return self.spark.table_exists.get(table_name, True)
+
+    def __init__(
+        self,
+        table_schemas: dict[str, list[str]] | None = None,
+        table_exists: dict[str, bool] | None = None,
+    ):
         self.sql_calls = []
         self.saved_rows = []
+        self.table_calls = []
+        self.table_schemas = table_schemas or {}
+        self.table_exists = table_exists or {}
+        self.created_tables = []
+        self.catalog = DummySpark._Catalog(self)
 
-    def table(self, _name: str):
-        return DummyDataFrame()
+    def table(self, name: str):
+        self.table_calls.append(name)
+        return DummyDataFrame(columns=self.table_schemas.get(name), spark=self)
 
     def sql(self, query: str):
         self.sql_calls.append(query)
@@ -108,6 +163,34 @@ tables:
     assert len(merge_calls) == 2
 
 
+def test_engine_run_table_list(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+tables:
+  - table: CustTable
+    domain: Sales
+    bronze: bronze.sales.custtable
+    silver: silver.sales.custtable
+  - table: SalesTable
+    domain: Sales
+    bronze: bronze.sales.salestable
+    silver: silver.sales.salestable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    result = engine.run_table_list(["SalesTable", "CustTable"])
+    assert result.tables == ["SalesTable", "CustTable"]
+    merge_calls = [q for q in engine.spark.sql_calls if "MERGE INTO" in q]
+    assert len(merge_calls) == 2
+
+
 def test_yaml_allows_custom_fields_and_scdtype(tmp_path: Path):
     (tmp_path / "custom.yml").write_text(
         """
@@ -137,14 +220,15 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
-    metadata_table: bronze.crm.globaloptionsetmetadata
-    option_name_column: optionsetname
-    option_value_column: optionvalue
-    option_label_column: label
-    output_column: salesstatus_label
+    enum: SalesStatus
+    mapping:
+      table: bronze.crm.globaloptionsetmetadata
+      enum_column: optionsetname
+      key_column: optionvalue
+      label_column: label
+      output_column: salesstatus_label
 """.strip(),
         encoding="utf-8",
     )
@@ -165,9 +249,9 @@ domain: Sales
 bronze: bronze.sales.salesorder
 silver: silver.sales.salesorder
 primary_key: recid
-enums:
+enum:
   - column: salesstatus
-    optionset: SalesStatus
+    enum: SalesStatus
 """.strip(),
         encoding="utf-8",
     )
@@ -179,11 +263,11 @@ enums:
         assert len(enum_mappings) == 1
         return df
 
-    monkeypatch.setattr(dataverse_module, "apply_enum_mappings", _fake_apply)
+    monkeypatch.setattr(adapter_module, "apply_enum_mappings", _fake_apply)
 
     engine = Engine.from_yaml_dir(
         spark=DummySpark(),
-        adapter=DataverseAdapter(),
+        adapter=PEJOAdapter(),
         schema_dir=tmp_path,
     )
 
@@ -216,8 +300,36 @@ primary_key: recid
     assert any("CREATE TABLE IF NOT EXISTS pejo_run_log" in q for q in spark.sql_calls)
 
 
+def test_engine_skips_when_source_table_missing(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+""".strip(),
+        encoding="utf-8",
+    )
 
-def test_engine_runs_scd2_update_and_insert(tmp_path: Path):
+    spark = DummySpark(table_exists={"bronze.sales.custtable": False})
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("CustTable")
+
+    assert len(spark.saved_rows) == 1
+    _, _, _, _, rows_source, status, error_message = spark.saved_rows[0]
+    assert status == "SKIPPED"
+    assert error_message == "Source table not found"
+    assert rows_source is None
+
+
+
+def test_engine_runs_scd2_single_merge(tmp_path: Path):
     (tmp_path / "dim.yml").write_text(
         """
 table: DimCustomer
@@ -239,21 +351,224 @@ scdtype: SCD2
 
     engine.run("DimCustomer")
 
-    update_calls = [q for q in spark.sql_calls if "UPDATE silver.sales.dimcustomer" in q]
-    insert_calls = [q for q in spark.sql_calls if "INSERT INTO silver.sales.dimcustomer" in q]
+    merge_calls = [q for q in spark.sql_calls if "MERGE INTO silver.sales.dimcustomer" in q]
+    assert len(merge_calls) == 1
+    assert "WHEN MATCHED" in merge_calls[0]
+    assert "WHEN NOT MATCHED" in merge_calls[0]
 
-    assert len(update_calls) == 1
-    assert len(insert_calls) == 1
+
+def test_engine_adds_missing_required_scd2_columns(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(
+        table_schemas={
+            "silver.sales.dimcustomer": ["recid", "dataareaid", "name"],
+        }
+    )
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    alter_calls = [q for q in spark.sql_calls if "ALTER TABLE silver.sales.dimcustomer ADD COLUMNS" in q]
+    assert len(alter_calls) == 1
+    assert "valid_from TIMESTAMP" in alter_calls[0]
+    assert "valid_to TIMESTAMP" in alter_calls[0]
+    assert "is_current BOOLEAN" in alter_calls[0]
+    assert "row_hash STRING" in alter_calls[0]
+
+
+def test_engine_does_not_add_required_scd2_columns_when_present(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(
+        table_schemas={
+            "silver.sales.dimcustomer": [
+                "recid",
+                "dataareaid",
+                "name",
+                "valid_from",
+                "valid_to",
+                "is_current",
+                "row_hash",
+            ],
+        }
+    )
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    alter_calls = [q for q in spark.sql_calls if "ALTER TABLE silver.sales.dimcustomer ADD COLUMNS" in q]
+    assert len(alter_calls) == 0
+
+
+
+
+def test_engine_applies_column_aliases_in_scd2_insert_select(tmp_path: Path):
+    (tmp_path / "dim.yml").write_text(
+        """
+table: DimCustomer
+domain: Sales
+bronze: bronze.sales.dimcustomer
+silver: silver.sales.dimcustomer
+primary_key: recid
+scdtype: SCD2
+columns:
+  - column: name
+    alias: CustomerName
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("DimCustomer")
+
+    merge_call = next(q for q in spark.sql_calls if "MERGE INTO silver.sales.dimcustomer" in q)
+    assert "INSERT (recid, dataareaid, CustomerName, valid_from, valid_to, is_current)" in merge_call
+    assert "VALUES (u.recid, u.dataareaid, u.name, current_timestamp()" in merge_call
+
+
+def test_engine_creates_target_table_if_missing_for_scd1(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+scdtype: SCD1
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark(table_exists={"silver.sales.custtable": False})
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.run("CustTable")
+
+    assert "silver.sales.custtable" in spark.created_tables
+def test_engine_dry_run_returns_sql_without_execution(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+primary_key: recid
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    dry_run = engine.dry_run("CustTable")
+    assert dry_run.table == "CustTable"
+    assert len(dry_run.sql_statements) == 1
+    assert "MERGE INTO" in dry_run.sql_statements[0]
+    assert not any("MERGE INTO" in q for q in spark.sql_calls)
+
+
+def test_engine_validate_only_domain_without_execution(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+tables:
+  - table: CustTable
+    domain: Sales
+    bronze: bronze.sales.custtable
+    silver: silver.sales.custtable
+  - table: SalesTable
+    domain: Sales
+    bronze: bronze.sales.salestable
+    silver: silver.sales.salestable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    result = engine.validate_only(domain="Sales")
+    assert set(result.tables) == {"CustTable", "SalesTable"}
+    assert not any("MERGE INTO" in q for q in spark.sql_calls)
+
+
+def test_engine_validate_only_requires_single_selector(tmp_path: Path):
+    (tmp_path / "sales.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    engine = Engine.from_yaml_dir(
+        spark=DummySpark(),
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    try:
+        engine.validate_only()
+        assert False, "Expected ValueError when no selector is supplied"
+    except ValueError as exc:
+        assert "Specify exactly one" in str(exc)
 
 
 
 def test_loads_hashing_and_enum_columns_from_yaml(tmp_path: Path):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_512
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -267,12 +582,13 @@ silver: silver_salestable
 primary_key: [recid, dataareaid]
 business_key: [salesid, dataareaid]
 hash_columns: [salesid, custaccount, salesstatus, invoiceaccount, modifieddatetime]
-enum_columns:
-  salesstatus:
-    metadata_table: bronze_enum_metadata
-    optionset: salesstatus
-    key_column: option
-    label_column: localizedlabel
+enum:
+  - column: salesstatus
+    enum: salesstatus
+    mapping:
+      table: bronze_enum_metadata
+      key_column: option
+      label_column: localizedlabel
 """.strip(),
         encoding="utf-8",
     )
@@ -284,6 +600,8 @@ enum_columns:
     assert cfg["hash_columns"][0] == "salesid"
     assert cfg["hashing"].algorithm == "sha2_512"
 
+    assert cfg["columns"] == {}
+
     assert len(cfg["enums"]) == 1
     assert cfg["enums"][0]["column"] == "salesstatus"
     assert cfg["enums"][0]["option_value_column"] == "option"
@@ -292,12 +610,11 @@ enum_columns:
 
 
 def test_engine_applies_hashing_strategy(tmp_path: Path, monkeypatch):
-    (tmp_path / "platform.yaml").write_text(
+    (tmp_path / "config.yml").write_text(
         """
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -337,6 +654,32 @@ hash_columns: [salesid, custaccount]
     assert calls["value"] == 1
 
 
+def test_load_metadata_recursively_from_metadata_root(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_512
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "sales").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "sales" / "salestable.yml").write_text(
+        """
+table: salestable
+domain: sales
+bronze: bronze_salestable
+silver: silver_salestable
+hash_columns: [salesid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    metadata = load_metadata_from_yaml(tmp_path)
+    assert "salestable" in metadata
+    assert metadata["salestable"]["hashing"].algorithm == "sha2_512"
+
+
 
 def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
     (tmp_path / "platform.yaml").write_text(
@@ -344,7 +687,6 @@ def test_table_level_hashing_overrides_are_rejected(tmp_path: Path):
 hashing:
   algorithm: sha2_256
   separator: "||"
-  null_replacement: ""
 """.strip(),
         encoding="utf-8",
     )
@@ -367,3 +709,150 @@ hash_algorithm: sha2_512
     except ValueError as exc:
         assert "Table-level hashing overrides are not allowed" in str(exc)
 
+
+def test_loads_columns_null_handling_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+columns:
+  - accountnum:
+      null_handling: error
+  - currency:
+      null_handling: replace
+      null_replacement: Unknown
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_metadata_from_yaml(tmp_path)["custtable"]
+    assert cfg["columns"]["accountnum"]["null_handling"] == "error"
+    assert cfg["columns"]["currency"]["null_handling"] == "replace"
+    assert cfg["columns"]["currency"]["null_replacement"] == "Unknown"
+
+
+def test_loads_bronze_lakehouse_from_platform_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    cfg = load_metadata_from_yaml(tmp_path)["custtable"]
+    assert cfg["bronze_lakehouse"] == "lh_bronze_dev"
+
+
+def test_engine_qualifies_bronze_table_with_bronze_lakehouse(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+    )
+
+    engine.validate_only(table_name="custtable")
+    assert spark.table_calls[0] == "lh_bronze_dev.bronze_finance_custtable"
+
+
+def test_engine_runtime_lakehouse_id_overrides_config(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+bronze_lakehouse: lh_bronze_dev
+hashing:
+  algorithm: sha2_256
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "cust.yml").write_text(
+        """
+table: custtable
+domain: masterdata
+bronze: bronze_finance_custtable
+silver: silver_masterdata_dim_custtable
+primary_key: [recid, dataareaid]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    spark = DummySpark()
+    engine = Engine.from_yaml_dir(
+        spark=spark,
+        adapter=DummyAdapter(),
+        schema_dir=tmp_path,
+        lakehouse_id="lh_bronze_test",
+    )
+
+    engine.validate_only(table_name="custtable")
+    assert spark.table_calls[0] == "lh_bronze_test.bronze_finance_custtable"
+
+
+def test_global_null_replacement_is_rejected(tmp_path: Path):
+    (tmp_path / "config.yml").write_text(
+        """
+hashing:
+  algorithm: sha2_256
+  null_replacement: ""
+""".strip(),
+        encoding="utf-8",
+    )
+
+    (tmp_path / "table.yml").write_text(
+        """
+table: CustTable
+domain: Sales
+bronze: bronze.sales.custtable
+silver: silver.sales.custtable
+""".strip(),
+        encoding="utf-8",
+    )
+
+    try:
+        load_metadata_from_yaml(tmp_path)
+        assert False, "Expected ValueError for global null_replacement"
+    except ValueError as exc:
+        assert "Global hashing.null_replacement is not supported" in str(exc)

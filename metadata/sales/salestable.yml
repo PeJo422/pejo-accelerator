@@ -3,9 +3,9 @@ description: Sales order header table from D365 FO
 
 domain: sales
 
-bronze: bronze_salestable
-silver: silver_salestable
-
+bronze_tablename: salestable
+silver_tablename: salestable
+enum_metadata_table: globaloptionsetmetadata
 primary_key:
   - recid
   - dataareaid
@@ -18,21 +18,27 @@ grain:
   - salesid
   - dataareaid
 
-load_strategy: scd1
+scdtype: scd1
 
 hash_columns:
   - custaccount
   - salesstatus
   - invoiceaccount
 
-hash_algorithm: sha2_256
+columns: 
+  - salesstatus:
+    enum: salesstatus
+    mapping:
+      table: ${enum_metadata_table}
+      key_column: option
+      label_column: localizedlabel
 
-enum_columns:
-  salesstatus:
-    metadata_table: bronze_enum_metadata
-    optionset: salesstatus
-    key_column: option
-    label_column: localizedlabel
+  - documentstatus:
+    enum: documentstatus
+    mapping:
+      table: ${enum_metadata_table}
+      key_column: option
+      label_column: localizedlabel
 
 soft_delete:
   enabled: true

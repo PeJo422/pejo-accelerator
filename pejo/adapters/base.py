@@ -17,5 +17,5 @@ class BaseAdapter(ABC):
         return df
 
     def default_primary_key(self) -> list[str]:
-        """Fallback primary key used when schema omits `primary_key`."""
+        """Legacy hook retained for compatibility; engine requires schema primary_key."""
         return []

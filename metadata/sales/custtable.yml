@@ -3,8 +3,8 @@ description: Customer master table from D365 FO
 
 domain: masterdata
 
-bronze: bronze_finance_custtable
-silver: silver_masterdata_dim_custtable
+bronze_tablename: custtable
+silver_tablename: custtable
 
 primary_key:
   - recid
@@ -18,14 +18,20 @@ grain:
   - accountnum
   - dataareaid
 
-load_strategy: scd2
+scdtype: scd2
 
 hash_columns:
   - currency
   - blocked
 
-hash_algorithm: sha2_256
-
 soft_delete:
   enabled: true
   column: isdeleted
+
+columns:
+  - accountnum:
+      null_handling: error
+
+  - currency:
+      null_handling: replace
+      null_replacement: "Unknown"
