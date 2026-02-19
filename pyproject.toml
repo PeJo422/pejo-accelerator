@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pejo_accelerator"
-version = "0.0.52"
+version = "0.0.54"
 description = "PeJo Fabric Accelerator SDK"
 authors = [
   {name = "Peter Johannessen"}

@@ -12,7 +12,7 @@ try:
 except ModuleNotFoundError:
     _pyyaml = None
 
-REQUIRED_FIELDS = {"table", "domain", "bronze", "silver"}
+REQUIRED_FIELDS = {"table", "domain"}
 _PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
@@ -157,22 +157,21 @@ def _load_platform_config(schema_dir: Path) -> dict[str, Any]:
     return {}
 
 
-def _normalize_bronze_lakehouse(platform_config: dict[str, Any]) -> str | None:
-    value = platform_config.get("bronze_lakehouse")
+def _normalize_layer_lakehouse(platform_config: dict[str, Any], layer: str) -> str | None:
+    value = platform_config.get(f"{layer}_lakehouse")
     if value:
         return str(value)
 
     lakehouse_cfg = platform_config.get("lakehouse")
     if isinstance(lakehouse_cfg, dict):
-        nested = lakehouse_cfg.get("bronze_lakehouse")
+        nested = lakehouse_cfg.get(f"{layer}_lakehouse")
         if nested:
             return str(nested)
-
     return None
 
 
-def _normalize_default_schema(platform_config: dict[str, Any]) -> str | None:
-    value = platform_config.get("bronze_schema", platform_config.get("schema"))
+def _normalize_layer_schema(platform_config: dict[str, Any], layer: str) -> str | None:
+    value = platform_config.get(f"{layer}_schema", platform_config.get("schema"))
     if value:
         return str(value)
     return None
@@ -358,6 +357,10 @@ def _normalize_enum_columns(schema: dict[str, Any]) -> list[dict[str, str]]:
 
 def _validate_schema(schema: dict[str, Any], schema_path: Path) -> None:
     missing = REQUIRED_FIELDS.difference(schema.keys())
+    if "bronze_tablename" not in schema and "bronze" not in schema:
+        missing = missing.union({"bronze_tablename"})
+    if "silver_tablename" not in schema and "silver" not in schema:
+        missing = missing.union({"silver_tablename"})
     if missing:
         missing_csv = ", ".join(sorted(missing))
         raise ValueError(f"Missing required field(s) [{missing_csv}] in {schema_path}")
@@ -378,8 +381,10 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
     metadata: dict[str, dict[str, Any]] = {}
     platform_config = _load_platform_config(directory)
     global_hashing = normalize_global_hash_config(platform_config)
-    bronze_lakehouse = _normalize_bronze_lakehouse(platform_config)
-    default_schema = _normalize_default_schema(platform_config)
+    bronze_lakehouse = _normalize_layer_lakehouse(platform_config, "bronze")
+    bronze_schema = _normalize_layer_schema(platform_config, "bronze")
+    silver_lakehouse = _normalize_layer_lakehouse(platform_config, "silver")
+    silver_schema = _normalize_layer_schema(platform_config, "silver")
 
     for schema_path in sorted(directory.glob("**/*.y*ml")):
         if schema_path.name in {"platform.yaml", "platform.yml", "config.yaml", "config.yml"}:
@@ -399,8 +404,22 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
             normalized = dict(entry)
             normalized = _resolve_placeholders(normalized, normalized)
 
+            bronze_table_name = normalized.get("bronze_tablename", normalized.get("bronze"))
+            silver_table_name = normalized.get("silver_tablename", normalized.get("silver"))
+            if not bronze_table_name or not silver_table_name:
+                raise ValueError(
+                    f"`bronze_tablename`/`silver_tablename` (or legacy bronze/silver) must be set in {schema_path}"
+                )
+
+            normalized["bronze_tablename"] = str(bronze_table_name)
+            normalized["silver_tablename"] = str(silver_table_name)
+            normalized["bronze"] = _build_fqn(str(bronze_table_name), bronze_lakehouse, bronze_schema)
+            normalized["silver"] = _build_fqn(str(silver_table_name), silver_lakehouse, silver_schema)
+
             if bronze_lakehouse:
                 normalized["bronze_lakehouse"] = bronze_lakehouse
+            if silver_lakehouse:
+                normalized["silver_lakehouse"] = silver_lakehouse
 
             normalized["primary_key"] = _normalize_primary_key(normalized)
             normalized["scdtype"] = _normalize_scd_type(normalized)
@@ -423,7 +442,7 @@ def load_metadata_from_yaml(schema_dir: str | Path) -> dict[str, dict[str, Any]]
                     mapping["metadata_table"] = _build_fqn(
                         table_name,
                         bronze_lakehouse,
-                        default_schema,
+                        bronze_schema,
                     )
             normalized["enums"] = enum_mappings
 

@@ -3,8 +3,8 @@ description: Customer master table from D365 FO
 
 domain: masterdata
 
-bronze: custtable
-silver: custtable
+bronze_tablename: custtable
+silver_tablename: custtable
 
 primary_key:
   - recid

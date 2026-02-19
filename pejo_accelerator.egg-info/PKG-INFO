@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: pejo_accelerator
-Version: 0.0.52
+Version: 0.0.54
 Summary: PeJo Fabric Accelerator SDK
 Author: Peter Johannessen
 Requires-Python: >=3.9

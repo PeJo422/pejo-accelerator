@@ -3,8 +3,8 @@ description: Sales order header table from D365 FO
 
 domain: sales
 
-bronze: salestable
-silver: salestable
+bronze_tablename: salestable
+silver_tablename: salestable
 enum_metadata_table: globaloptionsetmetadata
 primary_key:
   - recid

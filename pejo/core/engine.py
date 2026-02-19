@@ -40,6 +40,7 @@ class Engine:
         "valid_to": "TIMESTAMP",
         "is_current": "BOOLEAN",
         "row_hash": "STRING",
+        "business_key_hash": "STRING",
     }
 
     def __init__(
@@ -76,6 +77,7 @@ class Engine:
     def run(self, table_name: str) -> None:
         logger = RunLogger(self.spark)
         logger.start(table_name)
+        sql_statements: list[str] = []
 
         try:
             df, sql_statements, plan_status = self._plan_for_table(table_name)
@@ -99,13 +101,13 @@ class Engine:
             logger.end(
                     status="SUCCESS", 
                     rows_source=df.count(),
-                    sql_text=";\n".join(sql_statements)
+                    executed_sql=";\n".join(sql_statements)
                     )
         except Exception as exc:
             logger.end(
                     status="FAILED", 
                     error_message=str(exc),
-                    sql_text=";\n".join(sql_statements)
+                    executed_sql=";\n".join(sql_statements)
                     )
             raise
 

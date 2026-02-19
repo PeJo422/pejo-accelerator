@@ -44,7 +44,9 @@ def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
     if not keys:
         raise ValueError("SCD2 requires at least one primary key column")
 
-    tracked_columns = [c for c in columns if c not in keys]
+    scd2_technical_columns = {"valid_from", "valid_to", "is_current"}
+    payload_columns = [c for c in columns if c not in scd2_technical_columns]
+    tracked_columns = [c for c in payload_columns if c not in keys]
     if not tracked_columns:
         raise ValueError("SCD2 requires at least one non-key column to detect changes")
 
@@ -69,8 +71,8 @@ def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
     change_condition_tu = " OR ".join([_cmp_tu(c) for c in tracked_columns])
     change_condition_t2s = " OR ".join([_cmp_t2s(c) for c in tracked_columns])
 
-    base_columns = ", ".join([_target_column(c, column_aliases) for c in columns])
-    base_values = ", ".join([f"u.{c}" for c in columns])
+    base_columns = ", ".join([_target_column(c, column_aliases) for c in payload_columns])
+    base_values = ", ".join([f"u.{c}" for c in payload_columns])
 
     merge_key_columns_update = ", ".join([f"s.{k} AS __merge_key_{k}" for k in keys])
     merge_key_columns_insert = ", ".join([f"NULL AS __merge_key_{k}" for k in keys])
@@ -78,10 +80,10 @@ def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
     merge_sql = f"""
     MERGE INTO {target} t
     USING (
-      SELECT {", ".join([f"s.{c}" for c in columns])}, {merge_key_columns_update}, 'U' AS __op
+      SELECT {", ".join([f"s.{c}" for c in payload_columns])}, {merge_key_columns_update}, 'U' AS __op
       FROM {source_view} s
       UNION ALL
-      SELECT {", ".join([f"s.{c}" for c in columns])}, {merge_key_columns_insert}, 'I' AS __op
+      SELECT {", ".join([f"s.{c}" for c in payload_columns])}, {merge_key_columns_insert}, 'I' AS __op
       FROM {source_view} s
       LEFT JOIN {target} t2
         ON {key_join_si}
