@@ -34,6 +34,12 @@ class ValidationResult:
 
 class Engine:
     """Execution engine for table and domain runs."""
+    SCD2_REQUIRED_COLUMNS = {
+        "valid_from": "TIMESTAMP",
+        "valid_to": "TIMESTAMP",
+        "is_current": "BOOLEAN",
+        "row_hash": "STRING",
+    }
 
     def __init__(
         self,
@@ -72,6 +78,11 @@ class Engine:
 
         try:
             df, sql_statements = self._plan_for_table(table_name)
+            config = self.metadata[table_name]
+            self._ensure_target_table(config["silver"])
+
+            if str(config.get("scdtype", "SCD1")).upper() == "SCD2":
+                self._ensure_scd2_target_columns(config["silver"])
 
             for statement in sql_statements:
                 self.spark.sql(statement)
@@ -171,14 +182,14 @@ class Engine:
 
         scd_type = str(config.get("scdtype", "SCD1")).upper()
         if scd_type == "SCD2":
-            update_sql, insert_sql = build_scd2_sql(
+            merge_sql = build_scd2_sql(
                 target=config["silver"],
                 source_view="source_view",
                 keys=keys,
                 columns=columns,
                 column_aliases=column_aliases,
             )
-            return df, [update_sql, insert_sql]
+            return df, [merge_sql]
         if scd_type == "SCD1":
             merge_sql = build_delta_merge_sql(
                 target=config["silver"],
@@ -202,3 +213,31 @@ class Engine:
             return bronze_table
 
         return f"{lakehouse}.{bronze_table}"
+
+    def _ensure_scd2_target_columns(self, target_table: str) -> None:
+        target_df = self.spark.table(target_table)
+        existing_columns: set[str] = set()
+
+        schema = getattr(target_df, "schema", None)
+        fields = getattr(schema, "fields", None) if schema is not None else None
+        if fields:
+            existing_columns = {str(field.name).lower() for field in fields}
+        elif hasattr(target_df, "columns"):
+            existing_columns = {str(column).lower() for column in target_df.columns}
+
+        missing = [
+            (column_name, data_type)
+            for column_name, data_type in self.SCD2_REQUIRED_COLUMNS.items()
+            if column_name.lower() not in existing_columns
+        ]
+        if not missing:
+            return
+
+        add_columns_sql = ", ".join([f"{column_name} {data_type}" for column_name, data_type in missing])
+        self.spark.sql(f"ALTER TABLE {target_table} ADD COLUMNS ({add_columns_sql})")
+
+    def _ensure_target_table(self, target_table: str) -> None:
+        self.spark.sql(
+            f"CREATE TABLE IF NOT EXISTS {target_table} USING DELTA "
+            "AS SELECT * FROM source_view WHERE 1 = 0"
+        )
