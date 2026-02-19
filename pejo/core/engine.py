@@ -184,6 +184,37 @@ class Engine:
             return None, None, "SOURCE_NOT_FOUND"
 
         df = self.spark.table(bronze_table)
+        scd_type = str(config.get("scdtype", "SCD1")).upper()
+
+        # Incremental filtering (optional): derive watermark from silver, never from run logs.
+        incremental_cfg = config.get("incremental") or {}
+        incremental_enabled = bool(incremental_cfg.get("enabled", False))
+        incremental_column = incremental_cfg.get("column")
+        if incremental_enabled:
+            if not incremental_column:
+                raise ValueError(
+                    f"Missing required incremental.column for table '{table_name}' when incremental.enabled=true"
+                )
+            incremental_column = str(incremental_column)
+            if incremental_column not in df.columns:
+                raise ValueError(
+                    f"Incremental column '{incremental_column}' not found in source table '{bronze_table}'"
+                )
+
+            silver_table = config["silver"]
+            if self.spark.catalog.tableExists(silver_table):
+                silver_df = self.spark.table(silver_table)
+                if incremental_column in silver_df.columns:
+                    watermark_df = silver_df
+                    if scd_type == "SCD2" and "is_current" in silver_df.columns:
+                        watermark_df = watermark_df.filter(F.col("is_current") == F.lit(True))
+
+                    watermark = watermark_df.agg(
+                        F.max(F.col(incremental_column)).alias("watermark")
+                    ).collect()[0]["watermark"]
+                    if watermark is not None:
+                        df = df.filter(F.col(incremental_column) > F.lit(watermark))
+
         df = self.adapter.transform(df)
         df = self.adapter.apply_features(self.spark, df, config)
         df = apply_hashing_strategy(df, config)
@@ -206,7 +237,6 @@ class Engine:
         if load_type != "delta_merge":
             raise ValueError(f"Unsupported load_type '{load_type}'. Only 'delta_merge' is supported.")
 
-        scd_type = str(config.get("scdtype", "SCD1")).upper()
         if scd_type == "SCD2":
             merge_sql = build_scd2_sql(
                 target=config["silver"],
