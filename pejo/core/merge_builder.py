@@ -33,7 +33,7 @@ def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None, 
     merge_sql += f"""
         WHEN MATCHED AND NOT (t.row_hash <=> s.row_hash) THEN UPDATE SET
         {update_clause}, 
-        t.updated_at = current_timestamp()
+        t._pl_updated_at = current_timestamp()
         WHEN NOT MATCHED THEN INSERT ({insert_columns}, _pl_updated_at)
         VALUES ({insert_values}, current_timestamp())
     """

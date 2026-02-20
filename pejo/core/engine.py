@@ -202,17 +202,22 @@ class Engine:
                 )
 
             silver_table = config["silver"]
+            watermark = None
+            watermark = None
+
             if self.spark.catalog.tableExists(silver_table):
                 silver_df = self.spark.table(silver_table)
+
                 if "_pl_updated_at" in silver_df.columns:
                     watermark = (
-                    silver_df
-                    .agg(F.max("_pl_updated_at").alias("watermark"))
-                    .collect()[0]["watermark"]
-        )
+                        silver_df
+                        .agg(F.max("_pl_updated_at").alias("watermark"))
+                        .collect()[0]["watermark"]
+                    )
 
-        if watermark is not None:
-            df = df.filter(F.col(incremental_column) > F.lit(watermark))
+            if watermark is not None:
+                df = df.filter(F.col(incremental_column) > F.lit(watermark))
+
 
         df = self.adapter.transform(df)
         df = self.adapter.apply_features(self.spark, df, config)
