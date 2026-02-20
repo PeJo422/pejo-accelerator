@@ -30,7 +30,7 @@ class RunLogger:
         self._ensure_log_table()
         self.run_id = str(uuid.uuid4())
         self.table_name = table_name
-        self.start_time = datetime.utcnow()
+        self.start_time = datetime.now()
         return self.run_id
 
     def end(
@@ -40,7 +40,7 @@ class RunLogger:
             rows_source=None,
             executed_sql=None,
             ):
-        end_time = datetime.utcnow()
+        end_time = datetime.now()
 
         schema = StructType(
             [

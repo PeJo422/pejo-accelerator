@@ -1,37 +1,31 @@
 table: custtable
 description: Customer master table from D365 FO
-
 domain: masterdata
-
 bronze_tablename: custtable
 silver_tablename: custtable
-
 primary_key:
   - recid
   - dataareaid
-
 business_key:
   - accountnum
   - dataareaid
-
 grain:
   - accountnum
   - dataareaid
-
 scdtype: scd2
-
 hash_columns:
   - currency
   - blocked
-
+incremental:
+  enabled: true
+  column: loaded_at
+  
 soft_delete:
   enabled: true
   column: isdeleted
-
 columns:
   - accountnum:
       null_handling: error
-
   - currency:
       null_handling: replace
       null_replacement: "Unknown"
