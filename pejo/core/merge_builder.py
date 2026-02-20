@@ -31,10 +31,11 @@ def build_delta_merge_sql(target, source_view, keys, columns, soft_delete=None, 
         """
 
     merge_sql += f"""
-        WHEN MATCHED THEN UPDATE SET
-        {update_clause}
-        WHEN NOT MATCHED THEN INSERT ({insert_columns})
-        VALUES ({insert_values})
+        WHEN MATCHED AND NOT (t.row_hash <=> s.row_hash) THEN UPDATE SET
+        {update_clause}, 
+        t.updated_at = current_timestamp()
+        WHEN NOT MATCHED THEN INSERT ({insert_columns}, updated_at)
+        VALUES ({insert_values}, current_timestamp())
     """
 
     return merge_sql
@@ -82,9 +83,10 @@ def build_scd2_sql(target, source_view, keys, columns, column_aliases=None):
     AND t.is_current = true
     WHEN MATCHED AND u.__op = 'U' AND ({change_condition_tu}) THEN UPDATE SET
       t.is_current = false,
-      t.valid_to = current_timestamp()
-    WHEN NOT MATCHED AND u.__op = 'I' THEN INSERT ({base_columns}, valid_from, valid_to, is_current)
-    VALUES ({base_values}, current_timestamp(), CAST(NULL AS TIMESTAMP), true)
+      t.valid_to = current_timestamp(),
+      t.updated_at = current_timestamp()
+    WHEN NOT MATCHED AND u.__op = 'I' THEN INSERT ({base_columns}, valid_from, valid_to, is_current, updated_at)
+    VALUES ({base_values}, current_timestamp(), CAST(NULL AS TIMESTAMP), true, current_timestamp())
     """
 
     return merge_sql

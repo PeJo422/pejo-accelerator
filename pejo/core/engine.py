@@ -311,4 +311,6 @@ class Engine:
             result = result.withColumn("valid_to", F.lit(None).cast("timestamp"))
         if "is_current" not in result.columns:
             result = result.withColumn("is_current", F.lit(True).cast("boolean"))
+        if "updated_at" not in result.columns:
+            result = result.withColumn("updated_at", F.current_timestamp())
         return result
