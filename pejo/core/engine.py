@@ -204,16 +204,15 @@ class Engine:
             silver_table = config["silver"]
             if self.spark.catalog.tableExists(silver_table):
                 silver_df = self.spark.table(silver_table)
-                if incremental_column in silver_df.columns:
-                    watermark_df = silver_df
-                    if scd_type == "SCD2" and "is_current" in silver_df.columns:
-                        watermark_df = watermark_df.filter(F.col("is_current") == F.lit(True))
+                if "_pl_updated_at" in silver_df.columns:
+                    watermark = (
+                    silver_df
+                    .agg(F.max("_pl_updated_at").alias("watermark"))
+                    .collect()[0]["watermark"]
+        )
 
-                    watermark = watermark_df.agg(
-                        F.max(F.col(incremental_column)).alias("watermark")
-                    ).collect()[0]["watermark"]
-                    if watermark is not None:
-                        df = df.filter(F.col(incremental_column) > F.lit(watermark))
+        if watermark is not None:
+            df = df.filter(F.col(incremental_column) > F.lit(watermark))
 
         df = self.adapter.transform(df)
         df = self.adapter.apply_features(self.spark, df, config)
@@ -221,11 +220,21 @@ class Engine:
         df.createOrReplaceTempView("source_view")
 
         columns = df.columns
+        # Exclude source-only incremental watermark column from silver payload
+        incremental_cfg = config.get("incremental") or {}
+        incremental_enabled = bool(incremental_cfg.get("enabled", False))
+        incremental_column = incremental_cfg.get("column")
+
+        if incremental_enabled and incremental_column:
+            incremental_column = str(incremental_column)
+        if incremental_column in columns:
+            columns = [c for c in columns if c != incremental_column]
+
         keys = config.get("primary_key") or []
         if not keys:
             raise ValueError(
-                f"Missing required `primary_key` for table '{table_name}'. "
-                "Define `primary_key` in schema."
+            f"Missing required `primary_key` for table '{table_name}'. "
+            "Define `primary_key` in schema."
             )
         column_aliases = {
             str(column_name): str(settings.get("alias"))
@@ -296,8 +305,9 @@ class Engine:
         if self.spark.catalog.tableExists(target_table):
             return
 
-        bootstrap_df = self._build_target_bootstrap_df(df)
+        bootstrap_df = self._build_target_bootstrap_df(df).limit(0)
         bootstrap_df.write.format("delta").mode("overwrite").saveAsTable(target_table)
+
 
     def _build_target_bootstrap_df(self, df):
         result = df
@@ -311,6 +321,6 @@ class Engine:
             result = result.withColumn("valid_to", F.lit(None).cast("timestamp"))
         if "is_current" not in result.columns:
             result = result.withColumn("is_current", F.lit(True).cast("boolean"))
-        if "updated_at" not in result.columns:
-            result = result.withColumn("updated_at", F.current_timestamp())
+        if "_pl_updated_at" not in result.columns:
+            result = result.withColumn("_pl_updated_at", F.current_timestamp())
         return result
